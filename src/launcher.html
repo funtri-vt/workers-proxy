@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V2 Edge Proxy Launcher</title>
+    <style>
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+        input { padding: 10px; width: 250px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-left: 10px; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Launch Secure Session</h2>
+        <form id="launcher-form">
+            <input type="text" id="target-url" placeholder="https://example.com" required>
+            <button type="submit">Go</button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('launcher-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            let urlStr = document.getElementById('target-url').value.trim();
+            if (!urlStr.startsWith('http')) urlStr = 'https://' + urlStr;
+
+            const targetDomain = new URL(urlStr).hostname;
+            const data = new TextEncoder().encode(targetDomain);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+
+            const encodedDomain = btoa(targetDomain);
+            const proxyBase = window.location.hostname;
+            const proxyUrl = new URL(new URL(urlStr).pathname + new URL(urlStr).search, `https://${hashHex}.${proxyBase}`);
+            proxyUrl.searchParams.set('__ptarget', encodedDomain);
+
+            window.location.href = proxyUrl.toString();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+name = "v2-proxy-test"
+main = "src/index.js"
+compatibility_date = "2024-03-19"
+
+# This rule allows us to import our raw HTML and JS files as strings in the Worker
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.raw.js"]
+fallbacks = []
+
+[[d1_databases]]
+binding = "DB"
+database_name = "proxy-db"
+database_id = "PASTE_YOUR_DATABASE_ID_HERE"
