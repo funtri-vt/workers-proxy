@@ -9,11 +9,18 @@ export default {
         const PROXY_BASE = env.PROXY_DOMAIN || url.hostname.split('.').slice(-2).join('.'); 
 
         // 1. Base Domain Routing (The Launcher)
-        if (url.hostname === PROXY_BASE) {
+        if (url.hostname === PROXY_BASE || url.hostname === `www.${PROXY_BASE}`) {
+            // Redirect www directly to the clean root domain launcher
+            if (url.hostname === `www.${PROXY_BASE}`) {
+                return Response.redirect(`https://${PROXY_BASE}/`, 301);
+            }
+
             if (url.pathname === '/') {
                 return new Response(launcherHtml, { headers: { 'Content-Type': 'text/html' } });
             }
-            return new Response("Not Found", { status: 404 });
+            
+            // If they type proxy.com/random-path, safely redirect back to the launcher
+            return Response.redirect(`https://${PROXY_BASE}/`, 302);
         }
 
         // 2. Serve the Client Interceptor Script
