@@ -181,6 +181,7 @@ class ProxyInterceptor {
             }
         };
 
+        // Service Worker Patching
         if (navigator.serviceWorker) {
             const originalRegister = navigator.serviceWorker.register;
             navigator.serviceWorker.register = async function(scriptURL, options) {
@@ -194,6 +195,7 @@ class ProxyInterceptor {
             };
         }
 
+        // Dedicated Web Worker Patching
         const OriginalWorker = window.Worker;
         if (OriginalWorker) {
             window.Worker = function(scriptURL, options) {
@@ -219,6 +221,55 @@ class ProxyInterceptor {
                         messageQueue.forEach(m => realWorker.postMessage(m.msg, m.transfer)); messageQueue = [];
                     } catch (err) {}
                 })();
+                return proxyWorker;
+            };
+        }
+
+        // Shared Worker Patching
+        const OriginalSharedWorker = window.SharedWorker;
+        if (OriginalSharedWorker) {
+            window.SharedWorker = function(scriptURL, options) {
+                const channel = new MessageChannel();
+                const proxyWorker = { port: channel.port1, onerror: null };
+                let realWorker = null;
+                let messageQueue = [];
+
+                channel.port1.start();
+                channel.port2.start();
+
+                // Queue or pass along messages while fetching
+                channel.port2.addEventListener('message', (e) => {
+                    if (realWorker) {
+                        realWorker.port.postMessage(e.data);
+                    } else {
+                        messageQueue.push(e.data);
+                    }
+                });
+
+                (async () => {
+                    try {
+                        const response = await originalFetch(self.createPiggybackUrl(scriptURL));
+                        let text = self.rewriteWorkerCode(await response.text());
+                        const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' }));
+                        
+                        realWorker = new OriginalSharedWorker(blobUrl, options);
+                        realWorker.port.start();
+
+                        // Pipe responses back to the original calling window
+                        realWorker.port.addEventListener('message', (e) => {
+                            channel.port2.postMessage(e.data);
+                        });
+                        
+                        if (proxyWorker.onerror) {
+                            realWorker.onerror = proxyWorker.onerror;
+                        }
+
+                        // Send any queued messages
+                        messageQueue.forEach(msg => realWorker.port.postMessage(msg));
+                        messageQueue = [];
+                    } catch (err) {}
+                })();
+                
                 return proxyWorker;
             };
         }
