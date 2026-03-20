@@ -74,7 +74,7 @@ class ProxyInterceptor {
             const url = new URL(originalUrlStr, window.location.href);
             if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return originalUrlStr;
 
-            // Fix: Use .host instead of .hostname to retain port numbers
+            // Use .host instead of .hostname to retain port numbers
             const targetDomain = url.host;
             if (targetDomain.endsWith(this.proxyDomain)) return originalUrlStr; 
 
@@ -92,7 +92,6 @@ class ProxyInterceptor {
     getWorkerSandbox() {
         return `
             const __proxyDomain = '${this.proxyDomain}';
-            // Fix: Added 'function' keyword to prevent SyntaxError
             const __syncHash = function ${this.syncHash.toString()};
             
             function __createPiggybackUrl(originalUrlStr) {
@@ -101,7 +100,6 @@ class ProxyInterceptor {
                     const url = new URL(originalUrlStr, self.location.href);
                     if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return originalUrlStr;
                     
-                    // Fix: Use .host instead of .hostname
                     const targetDomain = url.host;
                     if (targetDomain.endsWith(__proxyDomain)) return originalUrlStr;
                     
@@ -131,6 +129,19 @@ class ProxyInterceptor {
                 return self.registration.showNotification(title, options);
             };
         `;
+    }
+
+    // CENTRALIZED REGEX ENGINE: Applies all Phase 4 syntactic replacements
+    rewriteWorkerCode(rawText) {
+        return rawText
+            .replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
+            .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
+            .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
+            .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
+            .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(')
+            // Phase 4 OS-Level Mitigations:
+            .replace(/\bclients\.openWindow\s*\(/g, 'self.__proxyOpenWindow(')
+            .replace(/\b(?:self\.)?registration\.showNotification\s*\(/g, 'self.__proxyShowNotification(');
     }
 
     applyMainThreadPatches() {
@@ -185,7 +196,7 @@ class ProxyInterceptor {
         const OriginalWebSocket = window.WebSocket;
         window.WebSocket = function(url, protocols) { return new OriginalWebSocket(self.createPiggybackUrl(url), protocols); };
 
-        // 2. Service Worker Patch
+        // 2. Service Worker Patch (Blob Engine)
         if (navigator.serviceWorker) {
             const originalRegister = navigator.serviceWorker.register;
             navigator.serviceWorker.register = async function(scriptURL, options) {
@@ -193,11 +204,8 @@ class ProxyInterceptor {
                     const response = await originalFetch(self.createPiggybackUrl(scriptURL));
                     let swText = await response.text();
                     
-                    swText = swText.replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
-                                   .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
-                                   .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
-                                   .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
-                                   .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                    // Apply central regex engine
+                    swText = self.rewriteWorkerCode(swText);
                                    
                     const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + swText], { type: 'application/javascript' }));
                     const defaultScope = new URL(scriptURL, window.location.href).pathname.replace(/\/[^\/]*$/, '/');
@@ -210,7 +218,7 @@ class ProxyInterceptor {
             };
         }
 
-        // 3. Web Worker Patch
+        // 3. Web Worker Patch (Blob Engine)
         const OriginalWorker = window.Worker;
         if (OriginalWorker) {
             window.Worker = function(scriptURL, options) {
@@ -228,11 +236,8 @@ class ProxyInterceptor {
                 (async () => {
                     try {
                         const response = await originalFetch(self.createPiggybackUrl(scriptURL));
-                        let text = (await response.text()).replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
-                                                          .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
-                                                          .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
-                                                          .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
-                                                          .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                        // Apply central regex engine
+                        let text = self.rewriteWorkerCode(await response.text());
                                                           
                         if (proxyWorker._terminated) return;
                         
@@ -249,7 +254,7 @@ class ProxyInterceptor {
             };
         }
 
-        // 4. Shared Worker Patch
+        // 4. Shared Worker Patch (Blob Engine)
         const OriginalSharedWorker = window.SharedWorker;
         if (OriginalSharedWorker) {
             window.SharedWorker = function(scriptURL, options) {
@@ -272,11 +277,8 @@ class ProxyInterceptor {
                 (async () => {
                     try {
                         const response = await originalFetch(self.createPiggybackUrl(scriptURL));
-                        let text = (await response.text()).replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
-                                                          .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
-                                                          .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
-                                                          .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
-                                                          .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                        // Apply central regex engine
+                        let text = self.rewriteWorkerCode(await response.text());
                         
                         realSharedWorker = new OriginalSharedWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' })), options);
                         
