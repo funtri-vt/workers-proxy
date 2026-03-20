@@ -1,0 +1,15 @@
+{
+  "name": "v2-edge-proxy",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "esbuild src/client-interceptor.source.js --bundle --minify --format=iife --outfile=src/client-interceptor.raw.js",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "acorn": "^8.11.3",
+    "astring": "^1.8.6",
+    "wrangler": "^3.0.0"
+  }
+}
