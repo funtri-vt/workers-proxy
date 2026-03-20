@@ -43,10 +43,10 @@ export default {
                                 .bind(aliasHash, targetDomain).run();
                 }
                 
-                // Clean the URL before proxying upstream
-                const cleanUrl = new URL(request.url);
-                cleanUrl.searchParams.delete('__ptarget');
-                return Response.redirect(cleanUrl.toString(), 302);
+                // FIX 1: Clean the URL before proxying upstream, but skip the 302 redirect
+                // to avoid double round-trips and DB replication race conditions.
+                url.searchParams.delete('__ptarget');
+                
             } else if (env.DB) {
                 const result = await env.DB.prepare("SELECT target_domain FROM domain_aliases WHERE alias_id = ?").bind(aliasHash).first();
                 if (result) targetDomain = result.target_domain;
@@ -54,6 +54,7 @@ export default {
 
             if (!targetDomain) return new Response("Unknown Alias Subdomain. Please start from the Launcher.", { status: 404 });
 
+            // url.search will naturally reflect the deleted __ptarget param here
             const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
             
             // Extract user reliably. Fallback to IP address if Cloudflare Access is not used.
@@ -86,18 +87,24 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
     if (proxyHeaders.has('Referer')) proxyHeaders.delete('Referer'); // Privacy
     if (savedCookies) proxyHeaders.set('Cookie', savedCookies);
 
-    // Handle WebSockets
-    if (clientRequest.headers.get('Upgrade') === 'websocket') {
+    // FIX 4: Handle WebSockets with case-insensitivity
+    const upgradeHeader = clientRequest.headers.get('Upgrade');
+    if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
         targetUrl.protocol = targetUrl.protocol.replace('http', 'ws');
         return await fetch(new Request(targetUrl, { method: clientRequest.method, headers: proxyHeaders }));
     }
 
-    const response = await fetch(new Request(targetUrl, { 
+    // FIX 2: Prevent TypeError by conditionally omitting the body for GET/HEAD requests
+    const fetchInit = { 
         method: clientRequest.method, 
         headers: proxyHeaders, 
-        body: clientRequest.body, 
         redirect: 'manual' 
-    }));
+    };
+    if (!['GET', 'HEAD'].includes(clientRequest.method.toUpperCase()) && clientRequest.body) {
+        fetchInit.body = clientRequest.body;
+    }
+
+    const response = await fetch(new Request(targetUrl, fetchInit));
     
     const responseHeaders = new Headers(response.headers);
 
@@ -144,11 +151,15 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
     responseHeaders.delete('Set-Cookie'); // Prevent the client browser from seeing the upstream cookie
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
-    // Rewrite 301/302 Redirect Locations
+    // FIX 3: Rewrite 301/302 Redirect Locations without destroying query strings and hashes
     if (responseHeaders.has('Location')) {
         const redirTarget = new URL(responseHeaders.get('Location'), targetUrl.origin);
         const redirHash = await syncHashServer(redirTarget.hostname);
-        responseHeaders.set('Location', `https://${redirHash}.${PROXY_BASE}${redirTarget.pathname}?__ptarget=${btoa(redirTarget.hostname)}`);
+        
+        const proxyRedirUrl = new URL(redirTarget.pathname + redirTarget.search + redirTarget.hash, `https://${redirHash}.${PROXY_BASE}`);
+        proxyRedirUrl.searchParams.set('__ptarget', btoa(redirTarget.hostname));
+        
+        responseHeaders.set('Location', proxyRedirUrl.toString());
     }
 
     const finalResponse = new Response(response.body, { status: response.status, headers: responseHeaders });
