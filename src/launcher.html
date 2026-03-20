@@ -26,14 +26,19 @@
             let urlStr = document.getElementById('target-url').value.trim();
             if (!urlStr.startsWith('http')) urlStr = 'https://' + urlStr;
 
-            const targetDomain = new URL(urlStr).hostname;
+            const parsedUrl = new URL(urlStr);
+            // FIX 1: Use .host to retain port numbers
+            const targetDomain = parsedUrl.host; 
+            
             const data = new TextEncoder().encode(targetDomain);
             const hashBuffer = await crypto.subtle.digest('SHA-256', data);
             const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
 
             const encodedDomain = btoa(targetDomain);
             const proxyBase = window.location.hostname;
-            const proxyUrl = new URL(new URL(urlStr).pathname + new URL(urlStr).search, `https://${hashHex}.${proxyBase}`);
+            
+            // FIX 2: Added parsedUrl.hash to retain URL fragments
+            const proxyUrl = new URL(parsedUrl.pathname + parsedUrl.search + parsedUrl.hash, `https://${hashHex}.${proxyBase}`);
             proxyUrl.searchParams.set('__ptarget', encodedDomain);
 
             window.location.href = proxyUrl.toString();
