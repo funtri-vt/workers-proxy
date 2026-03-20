@@ -219,7 +219,7 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
 
     // Only inject HTMLRewriter on actual HTML pages
     if ((responseHeaders.get('content-type') || '').includes('text/html')) {
-        return injectHTMLRewriter(finalResponse, PROXY_BASE);
+        return injectHTMLRewriter(finalResponse, PROXY_BASE, targetUrl.hostname);
     }
 
     return finalResponse;

@@ -5,13 +5,17 @@ async function generateDomainHash(domain) {
 }
 
 class HeadInjector {
-    constructor(proxyDomain) {
+    constructor(proxyDomain, targetDomain) {
         this.proxyDomain = proxyDomain;
+        this.targetDomain = targetDomain;
     }
     element(element) {
-        // Expose the proxy domain globally and inject our interceptor right at the top of the <head>
+        // Expose the proxy domain and target domain globally, then inject our interceptor
         element.prepend(`
-            <script>window.__PROXY_DOMAIN__ = "${this.proxyDomain}";</script>
+            <script>
+                window.__PROXY_DOMAIN__ = "${this.proxyDomain}";
+                window.__TARGET_DOMAIN__ = "${this.targetDomain}";
+            </script>
             <script src="/__proxy/interceptor.js"></script>
         `, { html: true });
     }
@@ -80,9 +84,9 @@ class MetaRefreshRewriter {
     }
 }
 
-export function injectHTMLRewriter(response, proxyDomain) {
+export function injectHTMLRewriter(response, proxyDomain, targetDomain) {
     return new HTMLRewriter()
-        .on('head', new HeadInjector(proxyDomain))
+        .on('head', new HeadInjector(proxyDomain, targetDomain))
         .on('a, img, script, link, form, video, source, iframe', new UniversalAliasRewriter(proxyDomain))
         .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain))
         .transform(response);
