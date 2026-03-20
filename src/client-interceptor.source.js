@@ -1,3 +1,6 @@
+import * as acorn from 'acorn';
+import { generate } from 'astring';
+
 /**
  * V2 Edge Proxy - Client-Side Interceptor & Worker Patcher
  * Injected into the <head> of every proxied page.
@@ -129,14 +132,95 @@ class ProxyInterceptor {
     }
 
     rewriteWorkerCode(rawText) {
-        return rawText
-            .replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
-            .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
-            .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
-            .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
-            .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(')
-            .replace(/\bclients\.openWindow\s*\(/g, 'self.__proxyOpenWindow(')
-            .replace(/\b(?:self\.)?registration\.showNotification\s*\(/g, 'self.__proxyShowNotification(');
+        try {
+            // 1. Parse into Abstract Syntax Tree
+            const ast = acorn.parse(rawText, { ecmaVersion: 'latest', sourceType: 'script' });
+
+            // 2. Helper to statically evaluate string concatenations (e.g., 'fe' + 'tch')
+            const evaluateStringConcat = (node) => {
+                if (node.type === 'Literal') return node.value;
+                if (node.type === 'BinaryExpression' && node.operator === '+') {
+                    const left = evaluateStringConcat(node.left);
+                    const right = evaluateStringConcat(node.right);
+                    if (typeof left === 'string' && typeof right === 'string') return left + right;
+                }
+                return null;
+            };
+
+            const TARGETS = {
+                'fetch': '__proxyFetch',
+                'WebSocket': '__proxyWebSocket',
+                'XMLHttpRequest': '__proxyXMLHttpRequest',
+                'EventSource': '__proxyEventSource',
+                'importScripts': '__proxyImportScripts'
+            };
+
+            // 3. Ultra-lightweight recursive AST Walker
+            const walk = (node, visitor) => {
+                if (!node || typeof node !== 'object') return;
+                if (Array.isArray(node)) {
+                    node.forEach(child => walk(child, visitor));
+                    return;
+                }
+                visitor(node);
+                for (const key in node) {
+                    if (key !== 'loc' && key !== 'range' && Object.prototype.hasOwnProperty.call(node, key)) {
+                        walk(node[key], visitor);
+                    }
+                }
+            };
+
+            // 4. Traverse and Mutate Nodes
+            walk(ast, (node) => {
+                // A. Direct Calls / New Instances (e.g., fetch(), new WebSocket())
+                if ((node.type === 'CallExpression' || node.type === 'NewExpression') && node.callee.type === 'Identifier') {
+                    if (TARGETS[node.callee.name]) {
+                        node.callee.name = TARGETS[node.callee.name];
+                    }
+                }
+                
+                // B. Non-computed Property Access (e.g., self.fetch)
+                if (node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier') {
+                    if (TARGETS[node.property.name]) {
+                        node.property.name = TARGETS[node.property.name];
+                    }
+                }
+
+                // C. Computed/Obfuscated Property Access (e.g., self['fe' + 'tch'])
+                if (node.type === 'MemberExpression' && node.computed) {
+                    const propVal = evaluateStringConcat(node.property);
+                    if (propVal && TARGETS[propVal]) {
+                        // Mutate the computed property into a static string literal of our proxy function
+                        node.property = { type: 'Literal', value: TARGETS[propVal], raw: `'${TARGETS[propVal]}'` };
+                    }
+                }
+
+                // D. Specific OS-Level Mitigations (clients.openWindow, registration.showNotification)
+                if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
+                    const propName = node.callee.property.name || evaluateStringConcat(node.callee.property);
+                    if (propName === 'openWindow') {
+                        node.callee = { type: 'Identifier', name: '__proxyOpenWindow' };
+                    } else if (propName === 'showNotification') {
+                        node.callee = { type: 'Identifier', name: '__proxyShowNotification' };
+                    }
+                }
+            });
+
+            // 5. Generate and return the newly secured script
+            return generate(ast);
+
+        } catch (e) {
+            console.warn("V2 Proxy - AST Parsing Failed, falling back to Regex", e);
+            // Fallback for broken/invalid syntax that might crash Acorn
+            return rawText
+                .replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
+                .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
+                .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
+                .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
+                .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(')
+                .replace(/\bclients\.openWindow\s*\(/g, 'self.__proxyOpenWindow(')
+                .replace(/\b(?:self\.)?registration\.showNotification\s*\(/g, 'self.__proxyShowNotification(');
+        }
     }
 
     applyMainThreadPatches() {
