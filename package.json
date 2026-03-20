@@ -7,9 +7,9 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0",
     "acorn": "^8.11.3",
     "astring": "^1.8.6",
-    "wrangler": "^3.0.0"
+    "esbuild": "^0.27.4",
+    "wrangler": "^4.76.0"
   }
 }

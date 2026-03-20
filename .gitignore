@@ -1,0 +1,10 @@
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Build output
+src/client-interceptor.raw.js
+
+# Cloudflare Wrangler output (good practice to include)
+.wrangler/
+dist/
