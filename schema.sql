@@ -6,13 +6,17 @@ CREATE TABLE domain_aliases (
 );
 CREATE INDEX idx_target_domain ON domain_aliases(target_domain);
 
--- Table 2: Secure Session Cookies
+-- Table 2: Secure Session Cookies (Upgraded with Full Metadata)
 CREATE TABLE session_cookies (
     user_id TEXT NOT NULL,
     domain TEXT NOT NULL,
     cookie_name TEXT NOT NULL,
     cookie_value TEXT NOT NULL,
     expires_at DATETIME,
-    PRIMARY KEY (user_id, domain, cookie_name)
+    path TEXT DEFAULT '/',
+    secure INTEGER DEFAULT 0,    -- SQLite uses 0/1 for booleans
+    http_only INTEGER DEFAULT 0, -- SQLite uses 0/1 for booleans
+    same_site TEXT DEFAULT 'Lax',
+    PRIMARY KEY (user_id, domain, cookie_name, path) -- Added path to the composite key
 );
 CREATE INDEX idx_user_domain ON session_cookies(user_id, domain);

@@ -28,9 +28,13 @@ class UniversalAliasRewriter {
             if (!originalUrl || originalUrl.startsWith('data:') || originalUrl.startsWith('javascript:')) return originalUrl;
             let urlToParse = originalUrl.startsWith('//') ? 'https:' + originalUrl : originalUrl;
             
-            if (urlToParse.startsWith('http://') || urlToParse.startsWith('https://')) {
+            // FIX 4: Added WebSocket protocol coverage
+            const validProtocols = ['http://', 'https://', 'ws://', 'wss://'];
+            if (validProtocols.some(protocol => urlToParse.startsWith(protocol))) {
                 const urlObj = new URL(urlToParse);
-                const targetDomain = urlObj.hostname;
+                
+                // FIX 2: Use .host instead of .hostname to retain specific port numbers
+                const targetDomain = urlObj.host;
                 if (targetDomain.endsWith(this.proxyDomain)) return originalUrl;
 
                 const hash = await generateDomainHash(targetDomain);
@@ -60,13 +64,17 @@ class MetaRefreshRewriter {
     async element(element) {
         const content = element.getAttribute('content');
         if (content) {
-            // Parses `<meta http-equiv="refresh" content="0; url=https://example.com">`
-            const parts = content.split('url=');
-            if (parts.length > 1) {
-                const originalUrl = parts[1].replace(/['"]/g, '').trim();
+            // FIX 3: Robust, case-insensitive Regex parsing for Meta Refresh URLs
+            const urlMatch = content.match(/url\s*=\s*['"]?([^'"]+)['"]?/i);
+            
+            if (urlMatch && urlMatch[1]) {
+                const originalUrl = urlMatch[1].trim();
                 const rewriter = new UniversalAliasRewriter(this.proxyDomain);
                 const newUrl = await rewriter.rewriteUrl(originalUrl);
-                element.setAttribute('content', `${parts[0]}url=${newUrl}`);
+                
+                // Replace the old URL with the new proxied URL, preserving the original delay
+                const newContent = content.replace(urlMatch[0], `url=${newUrl}`);
+                element.setAttribute('content', newContent);
             }
         }
     }

@@ -43,8 +43,7 @@ export default {
                                 .bind(aliasHash, targetDomain).run();
                 }
                 
-                // FIX 1: Clean the URL before proxying upstream, but skip the 302 redirect
-                // to avoid double round-trips and DB replication race conditions.
+                // Clean the URL before proxying upstream, skipping the 302 redirect
                 url.searchParams.delete('__ptarget');
                 
             } else if (env.DB) {
@@ -54,7 +53,7 @@ export default {
 
             if (!targetDomain) return new Response("Unknown Alias Subdomain. Please start from the Launcher.", { status: 404 });
 
-            // url.search will naturally reflect the deleted __ptarget param here
+            // url.search naturally reflects the deleted __ptarget param here
             const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
             
             // Extract user reliably. Fallback to IP address if Cloudflare Access is not used.
@@ -69,12 +68,12 @@ export default {
 async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY_BASE) {
     let savedCookies = "";
     
-    // Inject valid cookies into the outgoing request
+    // Inject valid cookies into the outgoing request, matching domain and path
     if (env.DB) {
         const { results } = await env.DB.prepare(`
             SELECT cookie_name, cookie_value FROM session_cookies 
-            WHERE user_id = ? AND domain = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-        `).bind(userId, targetUrl.hostname).all();
+            WHERE user_id = ? AND domain = ? AND ? LIKE path || '%' AND (expires_at IS NULL OR expires_at > datetime('now'))
+        `).bind(userId, targetUrl.hostname, targetUrl.pathname).all();
         
         if (results && results.length > 0) {
             savedCookies = results.map(row => `${row.cookie_name}=${row.cookie_value}`).join('; ');
@@ -87,14 +86,14 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
     if (proxyHeaders.has('Referer')) proxyHeaders.delete('Referer'); // Privacy
     if (savedCookies) proxyHeaders.set('Cookie', savedCookies);
 
-    // FIX 4: Handle WebSockets with case-insensitivity
+    // Handle WebSockets
     const upgradeHeader = clientRequest.headers.get('Upgrade');
     if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
         targetUrl.protocol = targetUrl.protocol.replace('http', 'ws');
         return await fetch(new Request(targetUrl, { method: clientRequest.method, headers: proxyHeaders }));
     }
 
-    // FIX 2: Prevent TypeError by conditionally omitting the body for GET/HEAD requests
+    // Prevent TypeError by conditionally omitting the body for GET/HEAD requests
     const fetchInit = { 
         method: clientRequest.method, 
         headers: proxyHeaders, 
@@ -105,10 +104,9 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
     }
 
     const response = await fetch(new Request(targetUrl, fetchInit));
-    
     const responseHeaders = new Headers(response.headers);
 
-    // The Cookie Vault: Parse and Store Set-Cookie securely
+    // The Cookie Vault: Parse and Store Set-Cookie securely with Full Metadata
     const setCookieHeaders = responseHeaders.getSetCookie(); 
     if (setCookieHeaders.length > 0 && env.DB) {
         for (const cookieString of setCookieHeaders) {
@@ -119,28 +117,45 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
             if (equalIndex > -1) {
                 const cookieName = mainPart.slice(0, equalIndex).trim();
                 const cookieValue = mainPart.slice(equalIndex + 1).trim();
+                
                 let expiresAt = null;
+                let path = '/';
+                let secure = 0;
+                let httpOnly = 0;
+                let sameSite = 'Lax';
 
-                // Extract Expiry metadata
+                // Extract all metadata
                 for (let i = 1; i < parts.length; i++) {
-                    const part = parts[i].trim().toLowerCase();
-                    if (part.startsWith('expires=')) {
-                        const dateStr = parts[i].trim().substring(8);
-                        // Format specifically for SQLite DATETIME: YYYY-MM-DD HH:MM:SS
+                    const partStr = parts[i].trim();
+                    const partStrLower = partStr.toLowerCase();
+
+                    if (partStrLower.startsWith('expires=')) {
+                        const dateStr = partStr.substring(8);
                         expiresAt = new Date(dateStr).toISOString().replace('T', ' ').substring(0, 19);
-                    } else if (part.startsWith('max-age=')) {
-                        const maxAge = parseInt(part.substring(8), 10);
+                    } else if (partStrLower.startsWith('max-age=')) {
+                        const maxAge = parseInt(partStr.substring(8), 10);
                         expiresAt = new Date(Date.now() + maxAge * 1000).toISOString().replace('T', ' ').substring(0, 19);
+                    } else if (partStrLower.startsWith('path=')) {
+                        path = partStr.substring(5) || '/';
+                    } else if (partStrLower === 'secure') {
+                        secure = 1;
+                    } else if (partStrLower === 'httponly') {
+                        httpOnly = 1;
+                    } else if (partStrLower.startsWith('samesite=')) {
+                        sameSite = partStr.substring(9);
                     }
                 }
 
                 await env.DB.prepare(`
-                    INSERT INTO session_cookies (user_id, domain, cookie_name, cookie_value, expires_at) 
-                    VALUES (?, ?, ?, ?, ?) 
-                    ON CONFLICT(user_id, domain, cookie_name) DO UPDATE SET 
+                    INSERT INTO session_cookies (user_id, domain, cookie_name, cookie_value, expires_at, path, secure, http_only, same_site) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+                    ON CONFLICT(user_id, domain, cookie_name, path) DO UPDATE SET 
                     cookie_value = excluded.cookie_value,
-                    expires_at = excluded.expires_at
-                `).bind(userId, targetUrl.hostname, cookieName, cookieValue, expiresAt).run();
+                    expires_at = excluded.expires_at,
+                    secure = excluded.secure,
+                    http_only = excluded.http_only,
+                    same_site = excluded.same_site
+                `).bind(userId, targetUrl.hostname, cookieName, cookieValue, expiresAt, path, secure, httpOnly, sameSite).run();
             }
         }
     }
@@ -151,7 +166,7 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
     responseHeaders.delete('Set-Cookie'); // Prevent the client browser from seeing the upstream cookie
     responseHeaders.set('Access-Control-Allow-Origin', '*');
 
-    // FIX 3: Rewrite 301/302 Redirect Locations without destroying query strings and hashes
+    // Rewrite 301/302 Redirect Locations safely retaining query parameters and hashes
     if (responseHeaders.has('Location')) {
         const redirTarget = new URL(responseHeaders.get('Location'), targetUrl.origin);
         const redirHash = await syncHashServer(redirTarget.hostname);
