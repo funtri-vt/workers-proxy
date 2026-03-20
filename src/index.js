@@ -1,6 +1,7 @@
 import { injectHTMLRewriter } from './rewriter.js';
 import launcherHtml from './launcher.html';
 import interceptorJs from './client-interceptor.raw.js';
+import adminHtml from './admin.html';
 
 export default {
     async fetch(request, env, ctx) {
@@ -8,7 +9,7 @@ export default {
         // Fallback to auto-detecting proxy base if env variable isn't set
         const PROXY_BASE = env.PROXY_DOMAIN || url.hostname.split('.').slice(-2).join('.'); 
 
-        // 1. Base Domain Routing (The Launcher)
+        // 1. Base Domain Routing (The Launcher & Admin)
         if (url.hostname === PROXY_BASE || url.hostname === `www.${PROXY_BASE}`) {
             // Redirect www directly to the clean root domain launcher
             if (url.hostname === `www.${PROXY_BASE}`) {
@@ -17,6 +18,43 @@ export default {
 
             if (url.pathname === '/') {
                 return new Response(launcherHtml, { headers: { 'Content-Type': 'text/html' } });
+            }
+
+            // --- ADMIN PANEL SECURE ROUTING ---
+            if (url.pathname.startsWith('/__admin')) {
+                const userIdentifier = extractUserIdentifier(request);
+                
+                // Block access if no ADMIN_EMAIL is set or if the user doesn't match
+                if (!env.ADMIN_EMAIL || userIdentifier !== env.ADMIN_EMAIL) {
+                    return new Response("Forbidden: Admin access requires authentication matching the ADMIN_EMAIL variable.", { status: 403 });
+                }
+
+                if (url.pathname === '/__admin') {
+                    return new Response(adminHtml, { headers: { 'Content-Type': 'text/html' } });
+                }
+
+                if (url.pathname === '/__admin/api/aliases') {
+                    if (request.method === 'GET') {
+                        const { results } = await env.DB.prepare("SELECT * FROM domain_aliases ORDER BY created_at DESC LIMIT 200").all();
+                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                    } else if (request.method === 'DELETE') {
+                        const { alias_id } = await request.json();
+                        await env.DB.prepare("DELETE FROM domain_aliases WHERE alias_id = ?").bind(alias_id).run();
+                        return new Response(JSON.stringify({ success: true }));
+                    }
+                }
+
+                if (url.pathname === '/__admin/api/sessions') {
+                    if (request.method === 'GET') {
+                        const { results } = await env.DB.prepare("SELECT user_id, domain, cookie_name, expires_at FROM session_cookies ORDER BY domain LIMIT 200").all();
+                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                    } else if (request.method === 'DELETE') {
+                        const { user_id, domain, cookie_name } = await request.json();
+                        await env.DB.prepare("DELETE FROM session_cookies WHERE user_id = ? AND domain = ? AND cookie_name = ?").bind(user_id, domain, cookie_name).run();
+                        return new Response(JSON.stringify({ success: true }));
+                    }
+                }
+                return new Response("Admin Endpoint Not Found", { status: 404 });
             }
             
             // If they type proxy.com/random-path, safely redirect back to the launcher
@@ -56,7 +94,7 @@ export default {
             // url.search naturally reflects the deleted __ptarget param here
             const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
             
-            // Extract user reliably. Fallback to IP address if Cloudflare Access is not used.
+            // Extract user reliably. Fallback to IP address if Access is not used.
             const userIdentifier = extractUserIdentifier(request);
 
             return await processUpstreamFetch(request, targetUrl, userIdentifier, env, PROXY_BASE);
@@ -195,7 +233,7 @@ function extractUserIdentifier(request) {
             return JSON.parse(atob(jwtToken.split('.')[1].replace(/-/g, '+').replace(/_/, '/'))).email; 
         } catch (e) { /* ignore parse error */ }
     }
-    // Fallback for PoC: Use the client's IP address to isolate sessions
+    // Fallback for testing: Use the client's IP address to isolate sessions
     return request.headers.get('CF-Connecting-IP') || 'anonymous-user';
 }
 
