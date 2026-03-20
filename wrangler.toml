@@ -5,6 +5,7 @@ compatibility_flags = ["global_fetch_strictly_public"]
 
 [build]
 command = "npm run build"
+watch_dir = "src"
 
 # This rule allows us to import our raw HTML and JS files as strings in the Worker
 [[rules]]

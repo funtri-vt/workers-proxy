@@ -1,6 +1,6 @@
 import { injectHTMLRewriter } from './rewriter.js';
 import launcherHtml from './launcher.html';
-import interceptorJs from './client-interceptor.raw.js';
+import interceptorJs from '../build/client-interceptor.raw.js';
 import adminHtml from './admin.html';
 
 export default {
