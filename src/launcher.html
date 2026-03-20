@@ -27,7 +27,7 @@
             if (!urlStr.startsWith('http')) urlStr = 'https://' + urlStr;
 
             const parsedUrl = new URL(urlStr);
-            // FIX 1: Use .host to retain port numbers
+            // Use .host to retain port numbers
             const targetDomain = parsedUrl.host; 
             
             const data = new TextEncoder().encode(targetDomain);
@@ -37,7 +37,7 @@
             const encodedDomain = btoa(targetDomain);
             const proxyBase = window.location.hostname;
             
-            // FIX 2: Added parsedUrl.hash to retain URL fragments
+            // Retain URL fragments and paths
             const proxyUrl = new URL(parsedUrl.pathname + parsedUrl.search + parsedUrl.hash, `https://${hashHex}.${proxyBase}`);
             proxyUrl.searchParams.set('__ptarget', encodedDomain);
 

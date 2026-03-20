@@ -28,12 +28,12 @@ class UniversalAliasRewriter {
             if (!originalUrl || originalUrl.startsWith('data:') || originalUrl.startsWith('javascript:')) return originalUrl;
             let urlToParse = originalUrl.startsWith('//') ? 'https:' + originalUrl : originalUrl;
             
-            // FIX 4: Added WebSocket protocol coverage
+            // Added WebSocket protocol coverage
             const validProtocols = ['http://', 'https://', 'ws://', 'wss://'];
             if (validProtocols.some(protocol => urlToParse.startsWith(protocol))) {
                 const urlObj = new URL(urlToParse);
                 
-                // FIX 2: Use .host instead of .hostname to retain specific port numbers
+                // Use .host instead of .hostname to retain specific port numbers
                 const targetDomain = urlObj.host;
                 if (targetDomain.endsWith(this.proxyDomain)) return originalUrl;
 
@@ -64,7 +64,7 @@ class MetaRefreshRewriter {
     async element(element) {
         const content = element.getAttribute('content');
         if (content) {
-            // FIX 3: Robust, case-insensitive Regex parsing for Meta Refresh URLs
+            // Robust, case-insensitive Regex parsing for Meta Refresh URLs
             const urlMatch = content.match(/url\s*=\s*['"]?([^'"]+)['"]?/i);
             
             if (urlMatch && urlMatch[1]) {

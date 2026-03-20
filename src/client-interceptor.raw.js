@@ -299,5 +299,8 @@ class ProxyInterceptor {
     }
 }
 
-const interceptor = new ProxyInterceptor('PROXY_DOMAIN_PLACEHOLDER');
+// MANDATORY INITIALIZATION FIX:
+// Ensure this script dynamically grabs the proxy domain injected by rewriter.js
+// Do NOT use a hardcoded placeholder here.
+const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__);
 interceptor.applyMainThreadPatches();

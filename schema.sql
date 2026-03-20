@@ -17,6 +17,6 @@ CREATE TABLE session_cookies (
     secure INTEGER DEFAULT 0,    -- SQLite uses 0/1 for booleans
     http_only INTEGER DEFAULT 0, -- SQLite uses 0/1 for booleans
     same_site TEXT DEFAULT 'Lax',
-    PRIMARY KEY (user_id, domain, cookie_name, path) -- Added path to the composite key
+    PRIMARY KEY (user_id, domain, cookie_name, path)
 );
 CREATE INDEX idx_user_domain ON session_cookies(user_id, domain);
