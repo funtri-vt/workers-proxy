@@ -1,18 +1,26 @@
+/**
+ * V2 Edge Proxy - Client-Side Interceptor & Worker Patcher
+ * Injected into the <head> of every proxied page.
+ */
 class ProxyInterceptor {
     constructor(proxyDomain) {
         this.proxyDomain = proxyDomain;
     }
 
+    // Pure, zero-dependency Synchronous SHA-256 with Two-Tier Caching
     syncHash(ascii) {
-        const env = typeof globalThis !== 'undefined' ? globalThis : self;
-        env.__hashCache = env.__hashCache || {};
-        if (env.__hashCache[ascii]) return env.__hashCache[ascii];
+        const globalScope = typeof window !== 'undefined' ? window : self;
+        
+        // Tier 1: Cache final string outputs for repeat domains
+        globalScope.__hashCache = globalScope.__hashCache || {};
+        if (globalScope.__hashCache[ascii]) return globalScope.__hashCache[ascii];
 
         function rightRotate(value, amount) { return (value >>> amount) | (value << (32 - amount)); }
         let mathPow = Math.pow, maxWord = mathPow(2, 32), lengthProperty = 'length';
         let i, j, result = '', words = [], asciiBitLength = ascii[lengthProperty] * 8;
 
-        if (!env.__sha256Constants) {
+        // Tier 2: Cache the heavy Prime Number math (Constants & Initial Hash Arrays)
+        if (!globalScope.__sha256Constants) {
             let initHash = [], k = [], primeCounter = 0, isComposite = {};
             for (let candidate = 2; primeCounter < 64; candidate++) {
                 if (!isComposite[candidate]) {
@@ -21,11 +29,11 @@ class ProxyInterceptor {
                     k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
                 }
             }
-            env.__sha256Constants = { initHash, k };
+            globalScope.__sha256Constants = { initHash, k };
         }
 
-        let hash = env.__sha256Constants.initHash.slice();
-        let k = env.__sha256Constants.k;
+        let hash = globalScope.__sha256Constants.initHash.slice();
+        let k = globalScope.__sha256Constants.k;
 
         ascii += '\x80';
         while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
@@ -35,6 +43,7 @@ class ProxyInterceptor {
         }
         words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
         words[words[lengthProperty]] = (asciiBitLength);
+        
         for (j = 0; j < words[lengthProperty];) {
             let w = words.slice(j, j += 16), oldHash = hash;
             hash = hash.slice(0, 8);
@@ -54,23 +63,28 @@ class ProxyInterceptor {
             }
         }
         
-        const finalOutput = result.substring(0, 16);
-        env.__hashCache[ascii] = finalOutput;
-        return finalOutput;
+        const finalHash = result.substring(0, 16);
+        globalScope.__hashCache[ascii] = finalHash; 
+        return finalHash; 
     }
 
     createPiggybackUrl(originalUrlStr) {
         try {
-            if (!originalUrlStr || originalUrlStr.startsWith('data:') || originalUrlStr.startsWith('blob:')) return originalUrlStr;
+            if (originalUrlStr.startsWith('/') || originalUrlStr.startsWith('.')) return originalUrlStr;
             const url = new URL(originalUrlStr, window.location.href);
             if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return originalUrlStr;
-            const targetDomain = url.hostname;
+
+            // Fix: Use .host instead of .hostname to retain port numbers
+            const targetDomain = url.host;
             if (targetDomain.endsWith(this.proxyDomain)) return originalUrlStr; 
 
             const aliasHash = this.syncHash(targetDomain);
+            const encodedDomain = btoa(targetDomain);
+
             const proxyProtocol = url.protocol.startsWith('ws') ? 'wss:' : 'https:';
             const proxyUrl = new URL(url.pathname + url.search + url.hash, `${proxyProtocol}//${aliasHash}.${this.proxyDomain}`);
-            proxyUrl.searchParams.set('__ptarget', btoa(targetDomain));
+            proxyUrl.searchParams.set('__ptarget', encodedDomain);
+            
             return proxyUrl.toString();
         } catch (e) { return originalUrlStr; }
     }
@@ -78,14 +92,19 @@ class ProxyInterceptor {
     getWorkerSandbox() {
         return `
             const __proxyDomain = '${this.proxyDomain}';
+            // Fix: Added 'function' keyword to prevent SyntaxError
             const __syncHash = function ${this.syncHash.toString()};
+            
             function __createPiggybackUrl(originalUrlStr) {
                 try {
-                    if (!originalUrlStr || originalUrlStr.startsWith('data:') || originalUrlStr.startsWith('blob:')) return originalUrlStr;
+                    if (originalUrlStr.startsWith('/') || originalUrlStr.startsWith('.')) return originalUrlStr;
                     const url = new URL(originalUrlStr, self.location.href);
                     if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return originalUrlStr;
-                    const targetDomain = url.hostname;
+                    
+                    // Fix: Use .host instead of .hostname
+                    const targetDomain = url.host;
                     if (targetDomain.endsWith(__proxyDomain)) return originalUrlStr;
+                    
                     const aliasHash = __syncHash(targetDomain);
                     const proxyProtocol = url.protocol.startsWith('ws') ? 'wss:' : 'https:';
                     const proxyUrl = new URL(url.pathname + url.search + url.hash, proxyProtocol + '//' + aliasHash + '.' + __proxyDomain);
@@ -93,6 +112,7 @@ class ProxyInterceptor {
                     return proxyUrl.toString();
                 } catch (e) { return originalUrlStr; }
             }
+            
             self.__proxyFetch = function(resource, options) {
                 if (resource instanceof Request) return fetch(new Request(__createPiggybackUrl(resource.url), resource), options);
                 return fetch(__createPiggybackUrl(resource), options);
@@ -101,6 +121,15 @@ class ProxyInterceptor {
             self.__proxyXMLHttpRequest = class extends XMLHttpRequest { open(method, url, async, user, password) { return super.open(method, __createPiggybackUrl(url), async, user, password); } };
             self.__proxyEventSource = class extends EventSource { constructor(url, eventSourceInitDict) { super(__createPiggybackUrl(url), eventSourceInitDict); } };
             self.__proxyImportScripts = function(...urls) { return importScripts(...urls.map(u => __createPiggybackUrl(u))); };
+            self.__proxyOpenWindow = function(url) { if (self.clients && self.clients.openWindow) return self.clients.openWindow(__createPiggybackUrl(url)); };
+            self.__proxyShowNotification = function(title, options) {
+                if (options) {
+                    if (options.icon) options.icon = __createPiggybackUrl(options.icon);
+                    if (options.image) options.image = __createPiggybackUrl(options.image);
+                    if (options.badge) options.badge = __createPiggybackUrl(options.badge);
+                }
+                return self.registration.showNotification(title, options);
+            };
         `;
     }
 
@@ -108,27 +137,80 @@ class ProxyInterceptor {
         const self = this;
         const originalFetch = window.fetch;
 
-        window.fetch = async function(resource, options) {
-            if (resource instanceof Request) return originalFetch.call(this, new Request(self.createPiggybackUrl(resource.url), resource), options);
-            return originalFetch.call(this, self.createPiggybackUrl(resource), options);
+        // 1. Core Networks (Robust Fetch & XHR Patches)
+        window.fetch = async function(input, init) {
+            try {
+                let url;
+                let requestOptions = init || {};
+                
+                if (input instanceof Request) {
+                    url = input.url;
+                    requestOptions = {
+                        method: input.method,
+                        headers: input.headers,
+                        credentials: input.credentials,
+                        cache: input.cache,
+                        redirect: input.redirect,
+                        referrer: input.referrer,
+                        ...requestOptions
+                    };
+                    
+                    if (!input.bodyUsed && !['GET', 'HEAD'].includes(input.method.toUpperCase())) {
+                        requestOptions.body = input.body;
+                    }
+                } else {
+                    url = input.toString();
+                }
+
+                const proxyUrl = self.createPiggybackUrl(url);
+                return originalFetch.call(this, proxyUrl, requestOptions);
+                
+            } catch (err) {
+                console.warn("🛡️ [Proxy] Fetch interception failed, using fallback:", err);
+                return originalFetch.call(this, input, init);
+            }
         };
+
         const originalXhrOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url, async, user, password) { return originalXhrOpen.call(this, method, self.createPiggybackUrl(url), async, user, password); };
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+            try {
+                const proxyUrl = self.createPiggybackUrl(url.toString());
+                return originalXhrOpen.call(this, method, proxyUrl, ...args);
+            } catch (err) {
+                console.warn("🛡️ [Proxy] XHR interception failed, using fallback:", err);
+                return originalXhrOpen.call(this, method, url, ...args);
+            }
+        };
+
         const OriginalWebSocket = window.WebSocket;
         window.WebSocket = function(url, protocols) { return new OriginalWebSocket(self.createPiggybackUrl(url), protocols); };
 
+        // 2. Service Worker Patch
         if (navigator.serviceWorker) {
             const originalRegister = navigator.serviceWorker.register;
             navigator.serviceWorker.register = async function(scriptURL, options) {
-                const response = await originalFetch(self.createPiggybackUrl(scriptURL));
-                let swText = await response.text();
-                swText = swText.replace(/\bfetch\s*\(/g, 'self.__proxyFetch(').replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(').replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(').replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(').replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
-                const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + swText], { type: 'application/javascript' }));
-                const defaultScope = new URL(scriptURL, window.location.href).pathname.replace(/\/[^\/]*$/, '/');
-                return originalRegister.call(this, blobUrl, { ...options, scope: options?.scope || defaultScope });
+                try {
+                    const response = await originalFetch(self.createPiggybackUrl(scriptURL));
+                    let swText = await response.text();
+                    
+                    swText = swText.replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
+                                   .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
+                                   .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
+                                   .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
+                                   .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                                   
+                    const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + swText], { type: 'application/javascript' }));
+                    const defaultScope = new URL(scriptURL, window.location.href).pathname.replace(/\/[^\/]*$/, '/');
+                    
+                    return originalRegister.call(this, blobUrl, { ...options, scope: options?.scope || defaultScope });
+                } catch (err) {
+                    console.error("🛡️ [Proxy] Failed to load ServiceWorker:", err);
+                    return originalRegister.call(this, scriptURL, options);
+                }
             };
         }
 
+        // 3. Web Worker Patch
         const OriginalWorker = window.Worker;
         if (OriginalWorker) {
             window.Worker = function(scriptURL, options) {
@@ -142,23 +224,80 @@ class ProxyInterceptor {
                     set onmessage(fn) { eventTarget.addEventListener('message', fn); },
                     set onerror(fn) { eventTarget.addEventListener('error', fn); }
                 };
+
                 (async () => {
-                    const response = await originalFetch(self.createPiggybackUrl(scriptURL));
-                    let text = (await response.text()).replace(/\bfetch\s*\(/g, 'self.__proxyFetch(').replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(').replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(').replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(').replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
-                    if (proxyWorker._terminated) return;
-                    realWorker = new OriginalWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' })), options);
-                    realWorker.onmessage = (e) => eventTarget.dispatchEvent(new MessageEvent('message', { data: e.data }));
-                    realWorker.onerror = (e) => eventTarget.dispatchEvent(new ErrorEvent('error', { error: e.error, message: e.message }));
-                    messageQueue.forEach(m => realWorker.postMessage(m.msg, m.transfer)); messageQueue = [];
+                    try {
+                        const response = await originalFetch(self.createPiggybackUrl(scriptURL));
+                        let text = (await response.text()).replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
+                                                          .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
+                                                          .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
+                                                          .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
+                                                          .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                                                          
+                        if (proxyWorker._terminated) return;
+                        
+                        realWorker = new OriginalWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' })), options);
+                        realWorker.onmessage = (e) => eventTarget.dispatchEvent(new MessageEvent('message', { data: e.data }));
+                        realWorker.onerror = (e) => eventTarget.dispatchEvent(new ErrorEvent('error', { error: e.error, message: e.message }));
+                        
+                        messageQueue.forEach(m => realWorker.postMessage(m.msg, m.transfer)); messageQueue = [];
+                    } catch (err) {
+                        console.error("🛡️ [Proxy] Failed to load Worker:", err);
+                    }
                 })();
                 return proxyWorker;
             };
         }
+
+        // 4. Shared Worker Patch
+        const OriginalSharedWorker = window.SharedWorker;
+        if (OriginalSharedWorker) {
+            window.SharedWorker = function(scriptURL, options) {
+                let realSharedWorker = null, messageQueue = [], startCalled = false, onmessageHandler = null;
+                const eventTarget = document.createElement('div');
+
+                const proxyPort = {
+                    postMessage: (msg, transfer) => realSharedWorker ? realSharedWorker.port.postMessage(msg, transfer) : messageQueue.push({msg, transfer}),
+                    start: () => realSharedWorker ? realSharedWorker.port.start() : (startCalled = true),
+                    addEventListener: (t, l, o) => eventTarget.addEventListener(t, l, o),
+                    removeEventListener: (t, l, o) => eventTarget.removeEventListener(t, l, o),
+                    set onmessage(fn) { 
+                        onmessageHandler = fn; 
+                        if (realSharedWorker) realSharedWorker.port.onmessage = fn; 
+                    }
+                };
+
+                const proxySharedWorker = { port: proxyPort, onerror: null };
+
+                (async () => {
+                    try {
+                        const response = await originalFetch(self.createPiggybackUrl(scriptURL));
+                        let text = (await response.text()).replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
+                                                          .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
+                                                          .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
+                                                          .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
+                                                          .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(');
+                        
+                        realSharedWorker = new OriginalSharedWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' })), options);
+                        
+                        if (proxySharedWorker.onerror) realSharedWorker.onerror = proxySharedWorker.onerror;
+                        if (onmessageHandler) realSharedWorker.port.onmessage = onmessageHandler;
+                        
+                        realSharedWorker.port.addEventListener('message', (e) => eventTarget.dispatchEvent(new MessageEvent('message', { data: e.data })));
+                        
+                        if (startCalled) realSharedWorker.port.start();
+                        messageQueue.forEach(m => realSharedWorker.port.postMessage(m.msg, m.transfer)); messageQueue = [];
+                    } catch (err) { 
+                        console.error("🛡️ [Proxy] Failed to load SharedWorker:", err); 
+                    }
+                })();
+                return proxySharedWorker;
+            };
+        }
+
+        console.log("🛡️ V2 Proxy Interceptor Active - ALL Workers & APIs Patched");
     }
 }
 
-// Ensure the script runs immediately upon injection
-if (typeof window !== 'undefined' && window.__PROXY_DOMAIN__) {
-    const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__);
-    interceptor.applyMainThreadPatches();
-}
+const interceptor = new ProxyInterceptor('PROXY_DOMAIN_PLACEHOLDER');
+interceptor.applyMainThreadPatches();
