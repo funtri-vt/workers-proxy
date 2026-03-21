@@ -27,13 +27,28 @@ export default {
                 if (url.pathname === '/__admin/api/aliases') {
                     if (request.method === 'GET') {
                         const qTarget = url.searchParams.get('target');
+                        const page = parseInt(url.searchParams.get('page')) || 1;
+                        const limit = 200;
+                        const offset = (page - 1) * limit;
+
+                        let countQuery = "SELECT COUNT(*) as total FROM domain_aliases";
                         let query = "SELECT * FROM domain_aliases";
                         let params = [];
-                        if (qTarget) { query += " WHERE target_domain LIKE ?"; params.push(`%${qTarget}%`); }
-                        query += " ORDER BY created_at DESC LIMIT 200";
+                        
+                        if (qTarget) { 
+                            countQuery += " WHERE target_domain LIKE ?";
+                            query += " WHERE target_domain LIKE ?"; 
+                            params.push(`%${qTarget}%`); 
+                        }
+
+                        const totalRes = await env.DB.prepare(countQuery).bind(...params).first();
+                        const totalPages = Math.ceil((totalRes ? totalRes.total : 0) / limit) || 1;
+
+                        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+                        params.push(limit, offset);
                         
                         const { results } = await env.DB.prepare(query).bind(...params).all();
-                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                        return new Response(JSON.stringify({ items: results || [], totalPages }), { headers: { 'Content-Type': 'application/json' } });
                     } else if (request.method === 'DELETE') {
                         const { alias_id } = await request.json();
                         await env.DB.prepare("DELETE FROM domain_aliases WHERE alias_id = ?").bind(alias_id).run();
@@ -45,15 +60,33 @@ export default {
                     if (request.method === 'GET') {
                         const qUser = url.searchParams.get('user');
                         const qDomain = url.searchParams.get('domain');
+                        const page = parseInt(url.searchParams.get('page')) || 1;
+                        const limit = 200;
+                        const offset = (page - 1) * limit;
+
+                        let countQuery = "SELECT COUNT(*) as total FROM session_cookies WHERE 1=1";
                         let query = "SELECT user_id, domain, cookie_name, expires_at FROM session_cookies WHERE 1=1";
                         let params = [];
                         
-                        if (qUser) { query += " AND user_id LIKE ?"; params.push(`%${qUser}%`); }
-                        if (qDomain) { query += " AND domain LIKE ?"; params.push(`%${qDomain}%`); }
-                        query += " ORDER BY domain LIMIT 200";
+                        if (qUser) { 
+                            countQuery += " AND user_id LIKE ?";
+                            query += " AND user_id LIKE ?"; 
+                            params.push(`%${qUser}%`); 
+                        }
+                        if (qDomain) { 
+                            countQuery += " AND domain LIKE ?";
+                            query += " AND domain LIKE ?"; 
+                            params.push(`%${qDomain}%`); 
+                        }
+
+                        const totalRes = await env.DB.prepare(countQuery).bind(...params).first();
+                        const totalPages = Math.ceil((totalRes ? totalRes.total : 0) / limit) || 1;
+
+                        query += " ORDER BY domain LIMIT ? OFFSET ?";
+                        params.push(limit, offset);
 
                         const { results } = await env.DB.prepare(query).bind(...params).all();
-                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                        return new Response(JSON.stringify({ items: results || [], totalPages }), { headers: { 'Content-Type': 'application/json' } });
                     } else if (request.method === 'DELETE') {
                         const { user_id, domain, cookie_name } = await request.json();
                         await env.DB.prepare("DELETE FROM session_cookies WHERE user_id = ? AND domain = ? AND cookie_name = ?").bind(user_id, domain, cookie_name).run();
@@ -64,13 +97,28 @@ export default {
                 if (url.pathname === '/__admin/api/blacklist') {
                     if (request.method === 'GET') {
                         const qDomain = url.searchParams.get('domain');
+                        const page = parseInt(url.searchParams.get('page')) || 1;
+                        const limit = 200;
+                        const offset = (page - 1) * limit;
+
+                        let countQuery = "SELECT COUNT(*) as total FROM blacklisted_domains";
                         let query = "SELECT domain, added_at FROM blacklisted_domains";
                         let params = [];
-                        if (qDomain) { query += " WHERE domain LIKE ?"; params.push(`%${qDomain}%`); }
-                        query += " ORDER BY added_at DESC LIMIT 200";
+                        
+                        if (qDomain) { 
+                            countQuery += " WHERE domain LIKE ?";
+                            query += " WHERE domain LIKE ?"; 
+                            params.push(`%${qDomain}%`); 
+                        }
+
+                        const totalRes = await env.DB.prepare(countQuery).bind(...params).first();
+                        const totalPages = Math.ceil((totalRes ? totalRes.total : 0) / limit) || 1;
+
+                        query += " ORDER BY added_at DESC LIMIT ? OFFSET ?";
+                        params.push(limit, offset);
 
                         const { results } = await env.DB.prepare(query).bind(...params).all();
-                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                        return new Response(JSON.stringify({ items: results || [], totalPages }), { headers: { 'Content-Type': 'application/json' } });
                     } else if (request.method === 'POST') {
                         const { domain } = await request.json();
                         if (!domain) return new Response("Domain is required", { status: 400 });
