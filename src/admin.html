@@ -16,6 +16,7 @@
             --btn-red: #ef4444; --btn-red-hover: #dc2626;
             --btn-green: #10b981; --btn-green-hover: #059669;
             --btn-blue: #3b82f6; --btn-blue-hover: #2563eb;
+            --btn-page: #e5e7eb; --btn-page-hover: #d1d5db;
             --tab-inactive: #e5e7eb; --tab-active: #3b82f6;
         }
 
@@ -28,6 +29,7 @@
                 --border-color: #374151;
                 --table-header: #374151;
                 --input-bg: #4b5563;
+                --btn-page: #374151; --btn-page-hover: #4b5563;
                 --tab-inactive: #374151;
             }
         }
@@ -56,6 +58,12 @@
         .btn-green { background: var(--btn-green); } .btn-green:hover { background: var(--btn-green-hover); }
         .btn-blue { background: var(--btn-blue); } .btn-blue:hover { background: var(--btn-blue-hover); }
         
+        /* Pagination */
+        .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 15px; font-size: 14px; font-weight: 500; }
+        .pagination button { background: var(--btn-page); color: var(--text-color); font-weight: 600; padding: 6px 12px; }
+        .pagination button:hover:not(:disabled) { background: var(--btn-page-hover); }
+        .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
+
         /* Modal */
         #modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 50; }
         .modal-content { background: var(--card-bg); padding: 24px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
@@ -93,6 +101,7 @@
                 <thead><tr><th>Blocked Domain</th><th>Added At</th><th>Action</th></tr></thead>
                 <tbody id="blacklist-body"><tr><td colspan="3">Loading...</td></tr></tbody>
             </table>
+            <div class="pagination" id="pagination-blacklist"></div>
         </div>
 
         <div id="tab-aliases" class="card">
@@ -109,6 +118,7 @@
                 <thead><tr><th>Alias Hash</th><th>Target Domain</th><th>Created At</th><th>Action</th></tr></thead>
                 <tbody id="aliases-body"><tr><td colspan="4">Loading...</td></tr></tbody>
             </table>
+            <div class="pagination" id="pagination-aliases"></div>
         </div>
 
         <div id="tab-sessions" class="card">
@@ -126,6 +136,7 @@
                 <thead><tr><th>User ID</th><th>Domain</th><th>Cookie Name</th><th>Action</th></tr></thead>
                 <tbody id="sessions-body"><tr><td colspan="4">Loading...</td></tr></tbody>
             </table>
+            <div class="pagination" id="pagination-sessions"></div>
         </div>
     </div>
 
@@ -140,6 +151,9 @@
     </div>
 
     <script>
+        // Pagination State
+        let currentPage = { blacklist: 1, aliases: 1, sessions: 1 };
+
         function switchTab(tabId) {
             document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -158,51 +172,88 @@
             });
         }
 
+        function renderPagination(tabId, current, totalPages) {
+            const container = document.getElementById(`pagination-${tabId}`);
+            if (totalPages <= 1) {
+                container.innerHTML = ''; // Hide if only 1 page
+                return;
+            }
+            container.innerHTML = `
+                <button ${current <= 1 ? 'disabled' : ''} onclick="changePage('${tabId}', -1)">Previous</button>
+                <span>Page ${current} of ${totalPages}</span>
+                <button ${current >= totalPages ? 'disabled' : ''} onclick="changePage('${tabId}', 1)">Next</button>
+            `;
+        }
+
+        function changePage(tabId, direction) {
+            currentPage[tabId] += direction;
+            if (tabId === 'blacklist') loadBlacklist();
+            if (tabId === 'aliases') loadAliases();
+            if (tabId === 'sessions') loadSessions();
+        }
+
         async function loadAliases(e) {
-            if(e) e.preventDefault();
+            if(e) { e.preventDefault(); currentPage.aliases = 1; }
             const target = document.getElementById('search-alias-target').value.trim();
-            const url = target ? `/__admin/api/aliases?target=${encodeURIComponent(target)}` : '/__admin/api/aliases';
+            
+            let url = `/__admin/api/aliases?page=${currentPage.aliases}`;
+            if (target) url += `&target=${encodeURIComponent(target)}`;
             
             const res = await fetch(url);
             if(res.status === 403) return document.body.innerHTML = '<h2>Access Denied</h2>';
-            const data = await res.json();
+            
+            const rawData = await res.json();
+            const data = Array.isArray(rawData) ? rawData : (rawData.items || []);
+            const totalPages = Array.isArray(rawData) ? 1 : (rawData.totalPages || 1);
             
             document.getElementById('aliases-body').innerHTML = data.length ? data.map(a => `
                 <tr><td><code>${a.alias_id}</code></td><td>${a.target_domain}</td><td>${a.created_at}</td>
                 <td><button class="btn-red" onclick="deleteAlias('${a.alias_id}')">Delete</button></td></tr>
             `).join('') : '<tr><td colspan="4">No aliases found.</td></tr>';
+
+            renderPagination('aliases', currentPage.aliases, totalPages);
         }
 
         async function loadSessions(e) {
-            if(e) e.preventDefault();
+            if(e) { e.preventDefault(); currentPage.sessions = 1; }
             const user = document.getElementById('search-session-user').value.trim();
             const domain = document.getElementById('search-session-domain').value.trim();
             
-            let url = '/__admin/api/sessions?';
-            if (user) url += `user=${encodeURIComponent(user)}&`;
-            if (domain) url += `domain=${encodeURIComponent(domain)}`;
+            let url = `/__admin/api/sessions?page=${currentPage.sessions}`;
+            if (user) url += `&user=${encodeURIComponent(user)}`;
+            if (domain) url += `&domain=${encodeURIComponent(domain)}`;
             
             const res = await fetch(url);
-            const data = await res.json();
+            const rawData = await res.json();
+            const data = Array.isArray(rawData) ? rawData : (rawData.items || []);
+            const totalPages = Array.isArray(rawData) ? 1 : (rawData.totalPages || 1);
             
             document.getElementById('sessions-body').innerHTML = data.length ? data.map(s => `
                 <tr><td title="${s.user_id}">${s.user_id.substring(0, 15)}...</td><td>${s.domain}</td><td><code>${s.cookie_name}</code></td>
                 <td><button class="btn-red" onclick="deleteSession('${s.user_id}', '${s.domain}', '${s.cookie_name}')">Delete</button></td></tr>
             `).join('') : '<tr><td colspan="4">No active sessions found.</td></tr>';
+
+            renderPagination('sessions', currentPage.sessions, totalPages);
         }
 
         async function loadBlacklist(e) {
-            if(e) e.preventDefault();
+            if(e) { e.preventDefault(); currentPage.blacklist = 1; }
             const domain = document.getElementById('search-blacklist').value.trim();
-            const url = domain ? `/__admin/api/blacklist?domain=${encodeURIComponent(domain)}` : '/__admin/api/blacklist';
+            
+            let url = `/__admin/api/blacklist?page=${currentPage.blacklist}`;
+            if (domain) url += `&domain=${encodeURIComponent(domain)}`;
             
             const res = await fetch(url);
-            const data = await res.json();
+            const rawData = await res.json();
+            const data = Array.isArray(rawData) ? rawData : (rawData.items || []);
+            const totalPages = Array.isArray(rawData) ? 1 : (rawData.totalPages || 1);
             
             document.getElementById('blacklist-body').innerHTML = data.length ? data.map(b => `
                 <tr><td><code>${b.domain}</code></td><td>${b.added_at}</td>
                 <td><button class="btn-red" onclick="deleteBlacklist('${b.domain}')">Remove</button></td></tr>
             `).join('') : '<tr><td colspan="3">No domains currently blacklisted.</td></tr>';
+
+            renderPagination('blacklist', currentPage.blacklist, totalPages);
         }
 
         async function addBlacklist() {
