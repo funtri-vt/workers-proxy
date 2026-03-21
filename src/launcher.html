@@ -5,11 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>V2 Edge Proxy Launcher</title>
     <style>
-        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
-        .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
-        input { padding: 10px; width: 250px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
-        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-left: 10px; }
-        button:hover { background: #0056b3; }
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: white;
+            --text-color: #111827;
+            --input-bg: white;
+            --input-border: #ccc;
+            --input-text: #111827;
+            --btn-bg: #007bff;
+            --btn-hover: #0056b3;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #111827;
+                --card-bg: #1f2937;
+                --text-color: #f9fafb;
+                --input-bg: #374151;
+                --input-border: #4b5563;
+                --input-text: #f9fafb;
+                --btn-bg: #3b82f6;
+                --btn-hover: #2563eb;
+            }
+        }
+
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--bg-color); color: var(--text-color); margin: 0; transition: background 0.3s, color 0.3s; }
+        .container { background: var(--card-bg); padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
+        input { padding: 10px; width: 250px; background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border); border-radius: 6px; font-size: 16px; }
+        button { padding: 10px 20px; background: var(--btn-bg); color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-left: 10px; }
+        button:hover { background: var(--btn-hover); }
     </style>
 </head>
 <body>

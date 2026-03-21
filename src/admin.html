@@ -5,83 +5,126 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>V2 Edge Proxy Admin</title>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111827; }
+        :root {
+            --bg-color: #f9fafb;
+            --card-bg: white;
+            --text-color: #111827;
+            --text-muted: #4b5563;
+            --border-color: #e5e7eb;
+            --table-header: #f3f4f6;
+            --input-bg: white;
+            --btn-red: #ef4444; --btn-red-hover: #dc2626;
+            --btn-green: #10b981; --btn-green-hover: #059669;
+            --btn-blue: #3b82f6; --btn-blue-hover: #2563eb;
+            --tab-inactive: #e5e7eb; --tab-active: #3b82f6;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #111827;
+                --card-bg: #1f2937;
+                --text-color: #f9fafb;
+                --text-muted: #9ca3af;
+                --border-color: #374151;
+                --table-header: #374151;
+                --input-bg: #4b5563;
+                --tab-inactive: #374151;
+            }
+        }
+
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; background: var(--bg-color); color: var(--text-color); transition: all 0.3s; }
         .container { max-width: 1000px; margin: auto; }
-        h1, h2 { color: #1f2937; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
-        th { background-color: #f3f4f6; font-weight: 600; }
-        button { background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
-        button:hover { background: #dc2626; }
-        .btn-add { background: #10b981; }
-        .btn-add:hover { background: #059669; }
-        .input-text { padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; flex: 1; }
+        h1, h2 { color: var(--text-color); }
+        .card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; overflow-x: auto; display: none; }
+        .card.active { display: block; }
         
-        /* Custom Modal Styles */
+        /* Tabs */
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab-btn { background: var(--tab-inactive); color: var(--text-color); padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .tab-btn.active { background: var(--tab-active); color: white; }
+
+        /* Tables & Forms */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+        th { background-color: var(--table-header); font-weight: 600; }
+        
+        .search-form { display: flex; gap: 10px; margin-bottom: 15px; background: var(--table-header); padding: 10px; border-radius: 6px; align-items: center;}
+        input { padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: var(--input-bg); color: var(--text-color); flex: 1; }
+        
+        button { border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s; color: white; }
+        .btn-red { background: var(--btn-red); } .btn-red:hover { background: var(--btn-red-hover); }
+        .btn-green { background: var(--btn-green); } .btn-green:hover { background: var(--btn-green-hover); }
+        .btn-blue { background: var(--btn-blue); } .btn-blue:hover { background: var(--btn-blue-hover); }
+        
+        /* Modal */
         #modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 50; }
-        .modal-content { background: white; padding: 24px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .modal-content { background: var(--card-bg); padding: 24px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .modal-actions { margin-top: 20px; display: flex; justify-content: center; gap: 12px; }
-        #modal-cancel { background: #9ca3af; }
-        #modal-cancel:hover { background: #6b7280; }
+        #modal-cancel { background: #9ca3af; } #modal-cancel:hover { background: #6b7280; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🛡️ Proxy Admin Dashboard</h1>
         
-        <div class="card">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('blacklist')">Blacklist</button>
+            <button class="tab-btn" onclick="switchTab('aliases')">Aliases</button>
+            <button class="tab-btn" onclick="switchTab('sessions')">Sessions</button>
+        </div>
+        
+        <div id="tab-blacklist" class="card active">
             <h2>Domain Blacklist</h2>
-            <p style="font-size: 14px; color: #4b5563; margin-top: 0;">Block specific upstream domains from being proxied to protect your account from TOS violations.</p>
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="new-blacklist-domain" class="input-text" placeholder="e.g., malicious-site.com">
-                <button class="btn-add" onclick="addBlacklist()">Add to Blacklist</button>
+            <p style="font-size: 14px; color: var(--text-muted); margin-top: 0;">Block specific upstream domains from being proxied to protect your account from TOS violations.</p>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <input type="text" id="new-blacklist-domain" placeholder="e.g., malicious-site.com">
+                <button class="btn-green" onclick="addBlacklist()">Add to Blacklist</button>
             </div>
+
+            <form class="search-form" onsubmit="loadBlacklist(event)">
+                <strong>Filter:</strong>
+                <input type="text" id="search-blacklist" placeholder="Search by Domain...">
+                <button type="submit" class="btn-blue">Search</button>
+                <button type="button" class="btn-blue" style="background: var(--text-muted)" onclick="document.getElementById('search-blacklist').value=''; loadBlacklist(event)">Clear</button>
+            </form>
+
             <table>
-                <thead>
-                    <tr>
-                        <th>Blocked Domain</th>
-                        <th>Added At</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="blacklist-body">
-                    <tr><td colspan="3">Loading...</td></tr>
-                </tbody>
+                <thead><tr><th>Blocked Domain</th><th>Added At</th><th>Action</th></tr></thead>
+                <tbody id="blacklist-body"><tr><td colspan="3">Loading...</td></tr></tbody>
             </table>
         </div>
 
-        <div class="card">
+        <div id="tab-aliases" class="card">
             <h2>Domain Aliases</h2>
+            
+            <form class="search-form" onsubmit="loadAliases(event)">
+                <strong>Filter:</strong>
+                <input type="text" id="search-alias-target" placeholder="Search Target Domain (e.g., wikipedia.org)">
+                <button type="submit" class="btn-blue">Search</button>
+                <button type="button" class="btn-blue" style="background: var(--text-muted)" onclick="document.getElementById('search-alias-target').value=''; loadAliases(event)">Clear</button>
+            </form>
+
             <table>
-                <thead>
-                    <tr>
-                        <th>Alias Hash</th>
-                        <th>Target Domain</th>
-                        <th>Created At</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="aliases-body">
-                    <tr><td colspan="4">Loading...</td></tr>
-                </tbody>
+                <thead><tr><th>Alias Hash</th><th>Target Domain</th><th>Created At</th><th>Action</th></tr></thead>
+                <tbody id="aliases-body"><tr><td colspan="4">Loading...</td></tr></tbody>
             </table>
         </div>
 
-        <div class="card">
+        <div id="tab-sessions" class="card">
             <h2>Active Session Cookies</h2>
+
+            <form class="search-form" onsubmit="loadSessions(event)">
+                <strong>Filter:</strong>
+                <input type="text" id="search-session-user" placeholder="User ID">
+                <input type="text" id="search-session-domain" placeholder="Target Domain">
+                <button type="submit" class="btn-blue">Search</button>
+                <button type="button" class="btn-blue" style="background: var(--text-muted)" onclick="document.getElementById('search-session-user').value=''; document.getElementById('search-session-domain').value=''; loadSessions(event)">Clear</button>
+            </form>
+
             <table>
-                <thead>
-                    <tr>
-                        <th>User ID</th>
-                        <th>Domain</th>
-                        <th>Cookie Name</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="sessions-body">
-                    <tr><td colspan="4">Loading...</td></tr>
-                </tbody>
+                <thead><tr><th>User ID</th><th>Domain</th><th>Cookie Name</th><th>Action</th></tr></thead>
+                <tbody id="sessions-body"><tr><td colspan="4">Loading...</td></tr></tbody>
             </table>
         </div>
     </div>
@@ -91,127 +134,111 @@
             <p id="modal-text">Are you sure you want to delete this item?</p>
             <div class="modal-actions">
                 <button id="modal-cancel">Cancel</button>
-                <button id="modal-confirm">Delete</button>
+                <button id="modal-confirm" class="btn-red">Delete</button>
             </div>
         </div>
     </div>
 
     <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
         function customConfirm(message) {
             return new Promise(resolve => {
                 const modal = document.getElementById('modal');
                 document.getElementById('modal-text').innerText = message;
                 modal.style.display = 'flex';
                 
-                document.getElementById('modal-cancel').onclick = () => {
-                    modal.style.display = 'none';
-                    resolve(false);
-                };
-                document.getElementById('modal-confirm').onclick = () => {
-                    modal.style.display = 'none';
-                    resolve(true);
-                };
+                document.getElementById('modal-cancel').onclick = () => { modal.style.display = 'none'; resolve(false); };
+                document.getElementById('modal-confirm').onclick = () => { modal.style.display = 'none'; resolve(true); };
             });
         }
 
-        async function loadData() {
-            try {
-                // Fetch Aliases
-                const aliasRes = await fetch('/__admin/api/aliases');
-                if (aliasRes.status === 403) {
-                    document.body.innerHTML = '<div class="container"><h2>Access Denied</h2><p>You are not authenticated as the admin.</p></div>';
-                    return;
-                }
-                const aliases = await aliasRes.json();
-                const aliasBody = document.getElementById('aliases-body');
-                aliasBody.innerHTML = aliases.length ? aliases.map(a => `
-                    <tr>
-                        <td><code>${a.alias_id}</code></td>
-                        <td>${a.target_domain}</td>
-                        <td>${a.created_at}</td>
-                        <td><button onclick="deleteAlias('${a.alias_id}')">Delete</button></td>
-                    </tr>
-                `).join('') : '<tr><td colspan="4">No aliases found.</td></tr>';
+        async function loadAliases(e) {
+            if(e) e.preventDefault();
+            const target = document.getElementById('search-alias-target').value.trim();
+            const url = target ? `/__admin/api/aliases?target=${encodeURIComponent(target)}` : '/__admin/api/aliases';
+            
+            const res = await fetch(url);
+            if(res.status === 403) return document.body.innerHTML = '<h2>Access Denied</h2>';
+            const data = await res.json();
+            
+            document.getElementById('aliases-body').innerHTML = data.length ? data.map(a => `
+                <tr><td><code>${a.alias_id}</code></td><td>${a.target_domain}</td><td>${a.created_at}</td>
+                <td><button class="btn-red" onclick="deleteAlias('${a.alias_id}')">Delete</button></td></tr>
+            `).join('') : '<tr><td colspan="4">No aliases found.</td></tr>';
+        }
 
-                // Fetch Sessions
-                const sessionRes = await fetch('/__admin/api/sessions');
-                const sessions = await sessionRes.json();
-                const sessionBody = document.getElementById('sessions-body');
-                sessionBody.innerHTML = sessions.length ? sessions.map(s => `
-                    <tr>
-                        <td title="${s.user_id}">${s.user_id.substring(0, 15)}...</td>
-                        <td>${s.domain}</td>
-                        <td><code>${s.cookie_name}</code></td>
-                        <td><button onclick="deleteSession('${s.user_id}', '${s.domain}', '${s.cookie_name}')">Delete</button></td>
-                    </tr>
-                `).join('') : '<tr><td colspan="4">No active sessions found.</td></tr>';
+        async function loadSessions(e) {
+            if(e) e.preventDefault();
+            const user = document.getElementById('search-session-user').value.trim();
+            const domain = document.getElementById('search-session-domain').value.trim();
+            
+            let url = '/__admin/api/sessions?';
+            if (user) url += `user=${encodeURIComponent(user)}&`;
+            if (domain) url += `domain=${encodeURIComponent(domain)}`;
+            
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            document.getElementById('sessions-body').innerHTML = data.length ? data.map(s => `
+                <tr><td title="${s.user_id}">${s.user_id.substring(0, 15)}...</td><td>${s.domain}</td><td><code>${s.cookie_name}</code></td>
+                <td><button class="btn-red" onclick="deleteSession('${s.user_id}', '${s.domain}', '${s.cookie_name}')">Delete</button></td></tr>
+            `).join('') : '<tr><td colspan="4">No active sessions found.</td></tr>';
+        }
 
-                // Fetch Blacklist
-                const blacklistRes = await fetch('/__admin/api/blacklist');
-                const blacklists = await blacklistRes.json();
-                const blacklistBody = document.getElementById('blacklist-body');
-                blacklistBody.innerHTML = blacklists.length ? blacklists.map(b => `
-                    <tr>
-                        <td><code>${b.domain}</code></td>
-                        <td>${b.added_at}</td>
-                        <td><button onclick="deleteBlacklist('${b.domain}')">Remove</button></td>
-                    </tr>
-                `).join('') : '<tr><td colspan="3">No domains currently blacklisted.</td></tr>';
-
-            } catch (err) {
-                console.error("Failed to load admin data:", err);
-            }
+        async function loadBlacklist(e) {
+            if(e) e.preventDefault();
+            const domain = document.getElementById('search-blacklist').value.trim();
+            const url = domain ? `/__admin/api/blacklist?domain=${encodeURIComponent(domain)}` : '/__admin/api/blacklist';
+            
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            document.getElementById('blacklist-body').innerHTML = data.length ? data.map(b => `
+                <tr><td><code>${b.domain}</code></td><td>${b.added_at}</td>
+                <td><button class="btn-red" onclick="deleteBlacklist('${b.domain}')">Remove</button></td></tr>
+            `).join('') : '<tr><td colspan="3">No domains currently blacklisted.</td></tr>';
         }
 
         async function addBlacklist() {
             const input = document.getElementById('new-blacklist-domain');
             const domain = input.value.trim().toLowerCase();
             if (!domain) return;
-
-            await fetch('/__admin/api/blacklist', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domain })
-            });
+            await fetch('/__admin/api/blacklist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
             input.value = '';
-            loadData();
+            loadBlacklist();
         }
 
         async function deleteBlacklist(domain) {
             if (await customConfirm(`Are you sure you want to remove ${domain} from the blacklist?`)) {
-                await fetch('/__admin/api/blacklist', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ domain })
-                });
-                loadData();
+                await fetch('/__admin/api/blacklist', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+                loadBlacklist();
             }
         }
 
         async function deleteAlias(alias_id) {
             if (await customConfirm('Are you sure you want to delete this alias? This might break active proxy links.')) {
-                await fetch('/__admin/api/aliases', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ alias_id })
-                });
-                loadData();
+                await fetch('/__admin/api/aliases', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alias_id }) });
+                loadAliases();
             }
         }
 
         async function deleteSession(user_id, domain, cookie_name) {
             if (await customConfirm('Are you sure you want to delete this cookie? This will log the user out of that domain.')) {
-                await fetch('/__admin/api/sessions', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id, domain, cookie_name })
-                });
-                loadData();
+                await fetch('/__admin/api/sessions', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, domain, cookie_name }) });
+                loadSessions();
             }
         }
 
-        // Initialize dashboard
-        loadData();
+        // Initialize all tabs on load
+        loadAliases();
+        loadSessions();
+        loadBlacklist();
     </script>
 </body>
 </html>
