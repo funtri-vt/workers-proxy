@@ -1,20 +1,23 @@
-async function generateDomainHash(domain) {
+async function generateDomainHash(domain, hashLength = 32) {
     const data = new TextEncoder().encode(domain);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, hashLength);
 }
 
 class HeadInjector {
-    constructor(proxyDomain, targetDomain) {
+    constructor(proxyDomain, targetDomain, hashLength) {
         this.proxyDomain = proxyDomain;
         this.targetDomain = targetDomain;
+        this.hashLength = hashLength;
     }
+    
     element(element) {
-        // Expose the proxy domain and target domain globally, then inject our interceptor
+        // Expose the proxy domain, target domain, and hash length globally, then inject our interceptor
         element.prepend(`
             <script>
                 window.__PROXY_DOMAIN__ = "${this.proxyDomain}";
                 window.__TARGET_DOMAIN__ = "${this.targetDomain}";
+                window.__PROXY_HASH_LENGTH__ = ${this.hashLength};
             </script>
             <script src="/__proxy/interceptor.js"></script>
         `, { html: true });
@@ -22,8 +25,9 @@ class HeadInjector {
 }
 
 class UniversalAliasRewriter {
-    constructor(proxyDomain) {
+    constructor(proxyDomain, hashLength) {
         this.proxyDomain = proxyDomain;
+        this.hashLength = hashLength;
         this.targetAttributes = ['href', 'src', 'action', 'poster'];
     }
 
@@ -41,7 +45,7 @@ class UniversalAliasRewriter {
                 const targetDomain = urlObj.host;
                 if (targetDomain.endsWith(this.proxyDomain)) return originalUrl;
 
-                const hash = await generateDomainHash(targetDomain);
+                const hash = await generateDomainHash(targetDomain, this.hashLength);
                 const proxyUrl = new URL(urlObj.pathname + urlObj.search + urlObj.hash, `https://${hash}.${this.proxyDomain}`);
                 proxyUrl.searchParams.set('__ptarget', btoa(targetDomain));
                 return proxyUrl.toString();
@@ -62,9 +66,11 @@ class UniversalAliasRewriter {
 }
 
 class MetaRefreshRewriter {
-    constructor(proxyDomain) {
+    constructor(proxyDomain, hashLength) {
         this.proxyDomain = proxyDomain;
+        this.hashLength = hashLength;
     }
+    
     async element(element) {
         const content = element.getAttribute('content');
         if (content) {
@@ -73,7 +79,7 @@ class MetaRefreshRewriter {
             
             if (urlMatch && urlMatch[1]) {
                 const originalUrl = urlMatch[1].trim();
-                const rewriter = new UniversalAliasRewriter(this.proxyDomain);
+                const rewriter = new UniversalAliasRewriter(this.proxyDomain, this.hashLength);
                 const newUrl = await rewriter.rewriteUrl(originalUrl);
                 
                 // Replace the old URL with the new proxied URL, preserving the original delay
@@ -84,10 +90,10 @@ class MetaRefreshRewriter {
     }
 }
 
-export function injectHTMLRewriter(response, proxyDomain, targetDomain) {
+export function injectHTMLRewriter(response, proxyDomain, targetDomain, hashLength = 32) {
     return new HTMLRewriter()
-        .on('head', new HeadInjector(proxyDomain, targetDomain))
-        .on('a, img, script, link, form, video, source, iframe', new UniversalAliasRewriter(proxyDomain))
-        .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain))
+        .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength))
+        .on('a, img, script, link, form, video, source, iframe', new UniversalAliasRewriter(proxyDomain, hashLength))
+        .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain, hashLength))
         .transform(response);
 }

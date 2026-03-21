@@ -26,3 +26,13 @@ CREATE TABLE blacklisted_domains (
     domain TEXT PRIMARY KEY,
     added_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Table 4: Database Configuration (OOBE & Settings)
+CREATE TABLE database_config (
+    config_key TEXT PRIMARY KEY,
+    config_value TEXT NOT NULL
+);
+
+-- Seed Initial Configuration Data
+INSERT INTO database_config (config_key, config_value) VALUES ('DATABASE_CONFIGURED', '0');
+INSERT INTO database_config (config_key, config_value) VALUES ('HASH_LENGTH', '32');

@@ -41,7 +41,7 @@
         .card.active { display: block; }
         
         /* Tabs */
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
         .tab-btn { background: var(--tab-inactive); color: var(--text-color); padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; transition: background 0.2s; }
         .tab-btn.active { background: var(--tab-active); color: white; }
 
@@ -50,8 +50,8 @@
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
         th { background-color: var(--table-header); font-weight: 600; }
         
-        .search-form { display: flex; gap: 10px; margin-bottom: 15px; background: var(--table-header); padding: 10px; border-radius: 6px; align-items: center;}
-        input { padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: var(--input-bg); color: var(--text-color); flex: 1; }
+        .search-form { display: flex; gap: 10px; margin-bottom: 15px; background: var(--table-header); padding: 10px; border-radius: 6px; align-items: center; flex-wrap: wrap;}
+        input[type="text"] { padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: var(--input-bg); color: var(--text-color); flex: 1; min-width: 150px; }
         
         button { border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s; color: white; }
         .btn-red { background: var(--btn-red); } .btn-red:hover { background: var(--btn-red-hover); }
@@ -69,16 +69,28 @@
         .modal-content { background: var(--card-bg); padding: 24px; border-radius: 8px; text-align: center; max-width: 400px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .modal-actions { margin-top: 20px; display: flex; justify-content: center; gap: 12px; }
         #modal-cancel { background: #9ca3af; } #modal-cancel:hover { background: #6b7280; }
+
+        /* Settings specific styles */
+        .setup-warning { display: none; background: #fef08a; padding: 15px; border-radius: 6px; color: #854d0e; margin-bottom: 20px; font-weight: 500; border: 1px solid #fde047; }
+        .settings-group { margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); }
+        .slider-container { display: flex; align-items: center; gap: 15px; margin-top: 10px; }
+        input[type="range"] { flex: 1; max-width: 300px; }
+        .hash-value { font-family: monospace; font-size: 16px; font-weight: bold; background: var(--table-header); padding: 4px 8px; border-radius: 4px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🛡️ Proxy Admin Dashboard</h1>
         
+        <div id="setup-banner" class="setup-warning">
+            ⚠️ <strong>Action Required:</strong> The proxy system is currently locked. Please navigate to Settings to save your initial configuration and initialize the database.
+        </div>
+
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('blacklist')">Blacklist</button>
             <button class="tab-btn" onclick="switchTab('aliases')">Aliases</button>
             <button class="tab-btn" onclick="switchTab('sessions')">Sessions</button>
+            <button class="tab-btn" onclick="switchTab('settings')" id="tab-btn-settings">⚙️ Settings</button>
         </div>
         
         <div id="tab-blacklist" class="card active">
@@ -138,6 +150,27 @@
             </table>
             <div class="pagination" id="pagination-sessions"></div>
         </div>
+
+        <div id="tab-settings" class="card">
+            <h2>System Settings & Migrations</h2>
+            <p style="font-size: 14px; color: var(--text-muted); margin-top: 0;">Configure global proxy behavior. Modifying these settings may initiate background migrations.</p>
+
+            <div class="settings-group">
+                <label><strong>Subdomain Hash Length</strong></label>
+                <p style="font-size: 13px; color: var(--text-muted); margin: 5px 0 0 0;">
+                    Determines the character length of the generated alias subdomains. Longer hashes are more secure against enumeration, but result in longer URLs. 
+                    <strong>Note: Changing this will automatically trigger a migration for all existing aliases.</strong>
+                </p>
+                <div class="slider-container">
+                    <input type="range" id="hash-length-input" min="16" max="63" value="32" oninput="document.getElementById('hash-length-display').innerText = this.value">
+                    <span class="hash-value" id="hash-length-display">32</span> chars
+                </div>
+            </div>
+
+            <button class="btn-blue" onclick="saveSettings()" style="font-size: 16px; padding: 10px 20px;">Save Configuration</button>
+            <div id="migration-status" style="margin-top: 15px; font-weight: 600; color: var(--btn-blue);"></div>
+        </div>
+
     </div>
 
     <div id="modal">
@@ -145,14 +178,15 @@
             <p id="modal-text">Are you sure you want to delete this item?</p>
             <div class="modal-actions">
                 <button id="modal-cancel">Cancel</button>
-                <button id="modal-confirm" class="btn-red">Delete</button>
+                <button id="modal-confirm" class="btn-red">Confirm</button>
             </div>
         </div>
     </div>
 
     <script>
-        // Pagination State
+        // Global State
         let currentPage = { blacklist: 1, aliases: 1, sessions: 1 };
+        let currentConfig = { DATABASE_CONFIGURED: '1', HASH_LENGTH: 32 };
 
         function switchTab(tabId) {
             document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
@@ -164,11 +198,17 @@
         function customConfirm(message) {
             return new Promise(resolve => {
                 const modal = document.getElementById('modal');
+                const confirmBtn = document.getElementById('modal-confirm');
+                
                 document.getElementById('modal-text').innerText = message;
                 modal.style.display = 'flex';
                 
+                // Reset styling just in case it was changed by another prompt
+                confirmBtn.className = 'btn-red';
+                confirmBtn.innerText = 'Confirm';
+
                 document.getElementById('modal-cancel').onclick = () => { modal.style.display = 'none'; resolve(false); };
-                document.getElementById('modal-confirm').onclick = () => { modal.style.display = 'none'; resolve(true); };
+                confirmBtn.onclick = () => { modal.style.display = 'none'; resolve(true); };
             });
         }
 
@@ -190,6 +230,33 @@
             if (tabId === 'blacklist') loadBlacklist();
             if (tabId === 'aliases') loadAliases();
             if (tabId === 'sessions') loadSessions();
+        }
+
+        // --- Data Loading Functions ---
+
+        async function loadConfig() {
+            try {
+                const res = await fetch('/__admin/api/config');
+                if (res.ok) {
+                    currentConfig = await res.json();
+                    document.getElementById('hash-length-input').value = currentConfig.HASH_LENGTH;
+                    document.getElementById('hash-length-display').innerText = currentConfig.HASH_LENGTH;
+                    
+                    if (currentConfig.DATABASE_CONFIGURED === '0') {
+                        document.getElementById('setup-banner').style.display = 'block';
+                        // Force highlight the settings tab if setup is required
+                        document.getElementById('tab-btn-settings').style.background = '#ef4444';
+                        document.getElementById('tab-btn-settings').style.color = 'white';
+                        switchTab('settings');
+                    } else {
+                        document.getElementById('setup-banner').style.display = 'none';
+                        document.getElementById('tab-btn-settings').style.background = '';
+                        document.getElementById('tab-btn-settings').style.color = '';
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load config", e);
+            }
         }
 
         async function loadAliases(e) {
@@ -256,6 +323,8 @@
             renderPagination('blacklist', currentPage.blacklist, totalPages);
         }
 
+        // --- Actions ---
+
         async function addBlacklist() {
             const input = document.getElementById('new-blacklist-domain');
             const domain = input.value.trim().toLowerCase();
@@ -286,7 +355,116 @@
             }
         }
 
+        // --- Settings & Migration Logic ---
+
+        // Client-side replication of the server hash function
+        async function syncHashClient(domain, hashLength) {
+            const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(domain));
+            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, hashLength);
+        }
+
+        async function saveSettings() {
+            const newLen = parseInt(document.getElementById('hash-length-input').value, 10);
+            const statusDiv = document.getElementById('migration-status');
+            
+            if (currentConfig.DATABASE_CONFIGURED === '1' && newLen === currentConfig.HASH_LENGTH) {
+                statusDiv.innerText = "No changes to save. Hash length is already " + newLen + ".";
+                return;
+            }
+
+            let confirmMsg = currentConfig.DATABASE_CONFIGURED === '0' 
+                ? "This will complete your initial setup. Proceed?"
+                : `Changing the hash length from ${currentConfig.HASH_LENGTH} to ${newLen} requires migrating all existing domain aliases. Depending on the size of your database, this may take a moment. Proceed?`;
+
+            // Style the modal confirm button to blue for settings
+            const confirmBtn = document.getElementById('modal-confirm');
+            confirmBtn.className = 'btn-blue';
+            confirmBtn.innerText = 'Save & Migrate';
+
+            if (!await customConfirm(confirmMsg)) return;
+
+            statusDiv.style.color = "var(--text-color)";
+            statusDiv.innerText = "Saving configuration...";
+            
+            // 1. Post new Config
+            const res = await fetch('/__admin/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ HASH_LENGTH: newLen })
+            });
+
+            if (!res.ok) {
+                statusDiv.style.color = "var(--btn-red)";
+                statusDiv.innerText = "Error saving configuration. Server rejected the request.";
+                return;
+            }
+
+            // 2. Perform Migration Loop if previously configured and changed
+            if (currentConfig.DATABASE_CONFIGURED === '1' && newLen !== currentConfig.HASH_LENGTH) {
+                statusDiv.innerText = "Fetching existing aliases for migration...";
+                let page = 1;
+                let hasMore = true;
+                let totalMigrated = 0;
+
+                try {
+                    while (hasMore) {
+                        const aliasRes = await fetch(`/__admin/api/aliases?page=${page}`);
+                        const aliasData = await aliasRes.json();
+                        const items = aliasData.items || [];
+                        
+                        if (items.length === 0) {
+                            hasMore = false;
+                            break;
+                        }
+
+                        statusDiv.innerText = `Computing hashes and migrating page ${page}...`;
+                        const migrations = [];
+                        
+                        // Compute new hashes on the client to save worker CPU time
+                        for (const item of items) {
+                            const newHash = await syncHashClient(item.target_domain, newLen);
+                            migrations.push({ new_alias_id: newHash, target_domain: item.target_domain });
+                        }
+
+                        if (migrations.length > 0) {
+                            const migRes = await fetch('/__admin/api/aliases/migrate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ migrations })
+                            });
+                            
+                            if (migRes.ok) {
+                                totalMigrated += migrations.length;
+                            } else {
+                                throw new Error("Batch migration failed on page " + page);
+                            }
+                        }
+
+                        if (page >= (aliasData.totalPages || 1)) {
+                            hasMore = false;
+                        } else {
+                            page++;
+                        }
+                    }
+                    statusDiv.style.color = "var(--btn-green)";
+                    statusDiv.innerText = `Success! Configuration saved and ${totalMigrated} aliases migrated successfully.`;
+                } catch (err) {
+                    console.error("Migration Error:", err);
+                    statusDiv.style.color = "var(--btn-red)";
+                    statusDiv.innerText = "Error during migration: " + err.message + ". Some aliases may be broken.";
+                }
+            } else {
+                statusDiv.style.color = "var(--btn-green)";
+                statusDiv.innerText = "Configuration saved successfully. System is initialized.";
+            }
+
+            // Reload state
+            await loadConfig();
+            loadAliases(); 
+        }
+
         // Initialize all tabs on load
+        loadConfig();
         loadAliases();
         loadSessions();
         loadBlacklist();

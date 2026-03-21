@@ -118,6 +118,27 @@
     </form>
 
     <script>
+        // Global state for dynamic hash length, defaults to 32 until config is loaded
+        let proxyHashLength = 32;
+
+        // Fetch dynamic configuration on page load
+        async function fetchSystemConfig() {
+            try {
+                const res = await fetch('/__admin/api/config');
+                if (res.ok) {
+                    const config = await res.json();
+                    if (config.HASH_LENGTH) {
+                        proxyHashLength = parseInt(config.HASH_LENGTH, 10);
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to fetch proxy system config. Using default settings.', err);
+            }
+        }
+        
+        // Initiate config load immediately
+        fetchSystemConfig();
+
         document.getElementById('launcher-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const inputVal = document.getElementById('target-input').value.trim();
@@ -146,9 +167,13 @@
             const parsedUrl = new URL(targetUrlStr);
             const targetDomain = parsedUrl.host; 
             
+            // Generate alias hash using the dynamically fetched length
             const data = new TextEncoder().encode(targetDomain);
             const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-            const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+            const hashHex = Array.from(new Uint8Array(hashBuffer))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('')
+                .substring(0, proxyHashLength);
 
             const encodedDomain = btoa(targetDomain);
             const proxyBase = window.location.hostname;

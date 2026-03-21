@@ -6,8 +6,14 @@ import { generate } from 'astring';
  * Injected into the <head> of every proxied page.
  */
 class ProxyInterceptor {
-    constructor(proxyDomain) {
+    constructor(proxyDomain, hashLength = 32) {
         this.proxyDomain = proxyDomain;
+        this.hashLength = hashLength;
+        
+        // Expose globally so syncHash can access it without 'this' context (important for Worker sandboxing)
+        if (typeof window !== 'undefined') {
+            window.__PROXY_HASH_LENGTH__ = this.hashLength;
+        }
     }
 
     // Pure, zero-dependency Synchronous SHA-256 with Two-Tier Caching
@@ -64,7 +70,9 @@ class ProxyInterceptor {
             }
         }
         
-        const finalHash = result.substring(0, 16);
+        // Dynamically slice based on configured hash length (default 32)
+        const hashLen = globalScope.__PROXY_HASH_LENGTH__ || 32;
+        const finalHash = result.substring(0, hashLen);
         globalScope.__hashCache[ascii] = finalHash; 
         return finalHash; 
     }
@@ -92,6 +100,7 @@ class ProxyInterceptor {
     getWorkerSandbox() {
         return `
             const __proxyDomain = '${this.proxyDomain}';
+            self.__PROXY_HASH_LENGTH__ = ${this.hashLength};
             const __syncHash = function ${this.syncHash.toString()};
             
             function __createPiggybackUrl(originalUrlStr) {
@@ -438,8 +447,10 @@ class ProxyInterceptor {
     }
 }
 
-// Ensure dynamic initialization
-const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__);
+// Ensure dynamic initialization with a fallback of 32 if the server hasn't injected it
+const hashConfigLength = window.__PROXY_HASH_LENGTH__ || 32;
+const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__, hashConfigLength);
+
 interceptor.applyMainThreadPatches();
 interceptor.applyLocationSpoofing();
 interceptor.applyPostMessageSpoofing();
