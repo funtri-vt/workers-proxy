@@ -243,7 +243,59 @@ export default {
                 if (result) targetDomain = result.target_domain;
             }
 
-            if (!targetDomain) return new Response("Unknown Alias Subdomain. Please start from the Launcher.", { status: 404 });
+            if (!targetDomain) {
+                // Return a clean 404 HTML page when the alias subdomain is not recognized
+                return new Response(`
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>404 Not Found</title>
+                        <style>
+                            body {
+                                font-family: system-ui, -apple-system, sans-serif;
+                                background-color: #f3f4f6;
+                                color: #1f2937;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                height: 100vh;
+                                margin: 0;
+                            }
+                            .card {
+                                background: white;
+                                padding: 2.5rem;
+                                border-radius: 0.5rem;
+                                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                                max-width: 24rem;
+                                width: 90%;
+                            }
+                            h1 { color: #dc2626; margin-top: 0; font-size: 1.5rem; }
+                            p { margin-bottom: 1rem; color: #4b5563; }
+                            ul { padding-left: 1.5rem; color: #4b5563; margin-bottom: 0; }
+                            li { margin-bottom: 0.5rem; }
+                            a { color: #2563eb; text-decoration: none; font-weight: 500; }
+                            a:hover { text-decoration: underline; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <h1>404 Not Found</h1>
+                            <p>The proxy could not resolve this domain alias.</p>
+                            <p>Try:</p>
+                            <ul>
+                                <li>Refreshing the page</li>
+                                <li><a href="https://${PROXY_BASE}/">Relaunching the proxy</a> from the home page</li>
+                            </ul>
+                        </div>
+                    </body>
+                    </html>
+                `, { 
+                    status: 404, 
+                    headers: { 'Content-Type': 'text/html; charset=utf-8' } 
+                });
+            }
 
             if (env.DB) {
                 const blacklistCheck = await env.DB.prepare("SELECT 1 FROM blacklisted_domains WHERE domain = ?").bind(targetDomain).first();
