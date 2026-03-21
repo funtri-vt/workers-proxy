@@ -421,7 +421,7 @@ async function syncHashServer(domain, hashLength = 32) {
     return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, hashLength);
 }
 
-function isInternalTarget(domain) {
+export function isInternalTarget(domain) {
     // 1. Fail-secure on missing or invalid input
     if (!domain || typeof domain !== 'string') return true;
 

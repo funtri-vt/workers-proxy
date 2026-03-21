@@ -4,12 +4,15 @@
   "scripts": {
     "build": "esbuild src/client-interceptor.source.js --bundle --minify --format=iife --outfile=build/client-interceptor.raw.js",
     "dev": "npm run build && wrangler dev",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "acorn": "^8.11.3",
     "astring": "^1.8.6",
     "esbuild": "^0.27.4",
+    "vitest": "^3.0.0",
     "wrangler": "^4.76.0"
   }
 }
