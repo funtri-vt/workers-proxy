@@ -231,14 +231,18 @@ export default {
             const pTarget = url.searchParams.get('__ptarget');
             
             if (pTarget) {
-                targetDomain = atob(pTarget);
-                const expectedHash = await syncHashServer(targetDomain, hashLength);
+                try {
+                    targetDomain = atob(pTarget);
+                    const expectedHash = await syncHashServer(targetDomain, hashLength);
                 
-                if (expectedHash === aliasHash && env.DB) {
-                    await env.DB.prepare(`INSERT INTO domain_aliases (alias_id, target_domain) VALUES (?, ?) ON CONFLICT DO NOTHING`)
-                                .bind(aliasHash, targetDomain).run();
+                    if (expectedHash === aliasHash && env.DB) {
+                        await env.DB.prepare(`INSERT INTO domain_aliases (alias_id, target_domain) VALUES (?, ?) ON CONFLICT DO NOTHING`)
+                                    .bind(aliasHash, targetDomain).run();
+                    }
+                    url.searchParams.delete('__ptarget');
+                } catch(err) {
+                    console.error("Invalid base64 in pTarget")
                 }
-                url.searchParams.delete('__ptarget');
             } else if (env.DB) {
                 const result = await env.DB.prepare("SELECT target_domain FROM domain_aliases WHERE alias_id = ?").bind(aliasHash).first();
                 if (result) targetDomain = result.target_domain;
