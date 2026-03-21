@@ -17,3 +17,7 @@ fallbacks = []
 binding = "DB"
 database_name = "proxy-db"
 database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+
+# Run at minute 0 of every hour (hourly) to clean up the database
+[triggers]
+crons = ["0 * * * *"]

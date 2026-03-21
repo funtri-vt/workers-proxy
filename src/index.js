@@ -100,6 +100,18 @@ export default {
             return await processUpstreamFetch(request, targetUrl, userIdentifier, env, PROXY_BASE);
         }
         return new Response("Invalid Route", { status: 404 });
+    },
+    async scheduled(event, env, ctx) {
+        if (env.DB) {
+            try {
+                const result = await env.DB.prepare(
+                    "DELETE FROM session_cookies WHERE expires_at <= datetime('now')"
+                ).run();
+                console.log(`🧹 Swept ${result.meta.changes} expired cookies from the vault.`);
+            } catch (err) {
+                console.error("Failed to sweep cookies:", err);
+            }
+        }
     }
 };
 
