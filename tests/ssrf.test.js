@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'; // or 'jest'
-import { isInternalTarget } from '../src/index';
+import { isInternalTarget } from '../src/worker-utils';
 
 describe('isInternalTarget SSRF Protection', () => {
     
