@@ -20,3 +20,9 @@ CREATE TABLE session_cookies (
     PRIMARY KEY (user_id, domain, cookie_name, path)
 );
 CREATE INDEX idx_user_domain ON session_cookies(user_id, domain);
+
+-- Table 3: Blacklisted Domains (Security & Abuse Prevention)
+CREATE TABLE blacklisted_domains (
+    domain TEXT PRIMARY KEY,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

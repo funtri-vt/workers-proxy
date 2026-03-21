@@ -54,6 +54,24 @@ export default {
                         return new Response(JSON.stringify({ success: true }));
                     }
                 }
+
+                // --- NEW: BLACKLIST API ---
+                if (url.pathname === '/__admin/api/blacklist') {
+                    if (request.method === 'GET') {
+                        const { results } = await env.DB.prepare("SELECT domain, added_at FROM blacklisted_domains ORDER BY added_at DESC").all();
+                        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
+                    } else if (request.method === 'POST') {
+                        const { domain } = await request.json();
+                        if (!domain) return new Response("Domain is required", { status: 400 });
+                        await env.DB.prepare("INSERT INTO blacklisted_domains (domain) VALUES (?) ON CONFLICT DO NOTHING").bind(domain).run();
+                        return new Response(JSON.stringify({ success: true }));
+                    } else if (request.method === 'DELETE') {
+                        const { domain } = await request.json();
+                        await env.DB.prepare("DELETE FROM blacklisted_domains WHERE domain = ?").bind(domain).run();
+                        return new Response(JSON.stringify({ success: true }));
+                    }
+                }
+
                 return new Response("Admin Endpoint Not Found", { status: 404 });
             }
             
@@ -90,6 +108,14 @@ export default {
             }
 
             if (!targetDomain) return new Response("Unknown Alias Subdomain. Please start from the Launcher.", { status: 404 });
+
+            // --- NEW: BLACKLIST ENFORCEMENT ---
+            if (env.DB) {
+                const blacklistCheck = await env.DB.prepare("SELECT 1 FROM blacklisted_domains WHERE domain = ?").bind(targetDomain).first();
+                if (blacklistCheck) {
+                    return new Response("Forbidden: This domain has been blacklisted by the proxy administrator.", { status: 403 });
+                }
+            }
 
             // url.search naturally reflects the deleted __ptarget param here
             const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
