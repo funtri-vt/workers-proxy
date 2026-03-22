@@ -258,6 +258,25 @@ export default {
                 if (result) targetDomain = result.target_domain;
             }
 
+            // ADDED: Fallback to Referer header for sub-resource race conditions
+            if (!targetDomain) {
+                const referer = request.headers.get('Referer');
+                if (referer) {
+                    try {
+                        const refUrl = new URL(referer);
+                        const refPTarget = refUrl.searchParams.get('__ptarget');
+                        if (refPTarget) {
+                            targetDomain = atob(refPTarget);
+                            const expectedHash = await syncHashServer(targetDomain, hashLength);
+                            if (expectedHash === aliasHash && env.DB) {
+                                await env.DB.prepare(`INSERT INTO domain_aliases (alias_id, target_domain) VALUES (?, ?) ON CONFLICT DO NOTHING`)
+                                            .bind(aliasHash, targetDomain).run();
+                            }
+                        }
+                    } catch (e) { /* Ignore invalid referer URLs */ }
+                }
+            }
+
             if (!targetDomain) {
                 // Return a clean 404 HTML page when the alias subdomain is not recognized
                 return new Response(`
@@ -346,6 +365,7 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
         const { results } = await env.DB.prepare(`
             SELECT cookie_name, cookie_value FROM session_cookies 
             WHERE user_id = ? AND domain = ? AND ? LIKE path || '%' AND (expires_at IS NULL OR expires_at > datetime('now'))
+            ORDER BY LENGTH(path) DESC
         `).bind(userId, targetUrl.hostname, targetUrl.pathname).all();
         if (results && results.length > 0) savedCookies = results.map(row => `${row.cookie_name}=${row.cookie_value}`).join('; ');
     }

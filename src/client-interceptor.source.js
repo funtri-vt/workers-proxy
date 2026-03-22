@@ -148,7 +148,17 @@ class ProxyInterceptor {
             self.__proxyWebSocket = class extends WebSocket { constructor(url, protocols) { super(__createPiggybackUrl(url), protocols); } };
             self.__proxyXMLHttpRequest = class extends XMLHttpRequest { open(method, url, async, user, password) { return super.open(method, __createPiggybackUrl(url), async, user, password); } };
             self.__proxyEventSource = class extends EventSource { constructor(url, eventSourceInitDict) { super(__createPiggybackUrl(url), eventSourceInitDict); } };
-            self.__proxyImportScripts = function(...urls) { return importScripts(...urls.map(u => __createPiggybackUrl(u))); };
+            
+            // --- IMPORT SCRIPTS SHADOWING ---
+            // We must shadow the global importScripts directly so that nested
+            // imported scripts also use the piggybacked URLs automatically,
+            // without relying exclusively on the AST rewriter for every layer.
+            const __originalImportScripts = self.importScripts;
+            self.__proxyImportScripts = function(...urls) { 
+                return __originalImportScripts.apply(self, urls.map(u => __createPiggybackUrl(u))); 
+            };
+            self.importScripts = self.__proxyImportScripts;
+
             self.__proxyOpenWindow = function(url) { if (self.clients && self.clients.openWindow) return self.clients.openWindow(__createPiggybackUrl(url)); };
             self.__proxyShowNotification = function(title, options) {
                 if (options) {
