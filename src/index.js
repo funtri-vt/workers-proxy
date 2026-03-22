@@ -1,6 +1,7 @@
 import { injectHTMLRewriter } from './rewriter.js';
 import launcherHtml from './launcher.html';
 import interceptorJs from '../build/client-interceptor.raw.js';
+import swJs from './proxy-sw.raw.js';
 import adminHtml from './admin.html';
 import { isInternalTarget } from './worker-utils.js';
 
@@ -215,9 +216,18 @@ export default {
             return Response.redirect(`https://${PROXY_BASE}/`, 302);
         }
 
-        // 2. Serve the Client Interceptor Script
+        // 2. Serve the Client Scripts
         if (url.pathname === '/__proxy/interceptor.js') {
             return new Response(interceptorJs, { headers: { 'Content-Type': 'application/javascript' } });
+        }
+
+        if (url.pathname === '/__proxy/sw.js') {
+            return new Response(swJs, { 
+                headers: { 
+                    'Content-Type': 'application/javascript',
+                    'Service-Worker-Allowed': '/' 
+                } 
+            });
         }
 
         // 3. Hash Routing & Piggyback Registration
@@ -425,4 +435,3 @@ async function syncHashServer(domain, hashLength = 32) {
     const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(domain));
     return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, hashLength);
 }
-

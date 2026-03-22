@@ -97,16 +97,37 @@ class ProxyInterceptor {
         } catch (e) { return originalUrlStr; }
     }
 
-    getWorkerSandbox() {
+    getWorkerSandbox(originalScriptUrl) {
         return `
             const __proxyDomain = '${this.proxyDomain}';
             self.__PROXY_HASH_LENGTH__ = ${this.hashLength};
             const __syncHash = function ${this.syncHash.toString()};
+            const __originalScriptUrl = '${originalScriptUrl}';
+            
+            // --- THE LOCATION SPOOFER ---
+            const __mockLocationUrl = new URL(__originalScriptUrl, self.location.href);
+            const __proxyLocation = new Proxy(__mockLocationUrl, {
+                get: function(target, prop) {
+                    if (prop === 'toString') return () => target.href;
+                    if (typeof target[prop] === 'function') return target[prop].bind(target);
+                    return target[prop];
+                },
+                set: function(target, prop, value) {
+                    if (prop === 'href') {
+                        target.href = __createPiggybackUrl(value);
+                        return true;
+                    }
+                    target[prop] = value;
+                    return true;
+                }
+            });
+            const location = __proxyLocation;
             
             function __createPiggybackUrl(originalUrlStr) {
                 try {
                     if (originalUrlStr.startsWith('/') || originalUrlStr.startsWith('.')) return originalUrlStr;
-                    const url = new URL(originalUrlStr, self.location.href);
+                    // FIX: Resolving relative URLs against the original script context, not the blob URL
+                    const url = new URL(originalUrlStr, __originalScriptUrl);
                     if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return originalUrlStr;
                     
                     const targetDomain = url.host;
@@ -140,12 +161,22 @@ class ProxyInterceptor {
         `;
     }
 
+    // --- NEW: Universal Regex Pipeline for JS/HTML ---
+    applyRegexPipeline(rawText) {
+        if (!rawText || typeof rawText !== 'string') return rawText;
+        return rawText
+            // Phase 2: Explicit property access
+            .replace(/\bwindow\.location\b/g, 'window.__proxyLocation')
+            .replace(/\bdocument\.location\b/g, 'document.__proxyLocation')
+            .replace(/\btop\.location\b/g, 'top.__proxyLocation')
+            // Phase 3: The "Naked" Location Problem
+            .replace(/(?<![a-zA-Z0-9_$])(?<!\.)\blocation\b(?=\s*(?:\.|\[|===?|!==?|=(?!=)))/g, 'window.__proxyLocation');
+    }
+
     rewriteWorkerCode(rawText) {
         try {
-            // 1. Parse into Abstract Syntax Tree
             const ast = acorn.parse(rawText, { ecmaVersion: 'latest', sourceType: 'script' });
 
-            // 2. Helper to statically evaluate string concatenations (e.g., 'fe' + 'tch')
             const evaluateStringConcat = (node) => {
                 if (node.type === 'Literal') return node.value;
                 if (node.type === 'BinaryExpression' && node.operator === '+') {
@@ -164,7 +195,6 @@ class ProxyInterceptor {
                 'importScripts': '__proxyImportScripts'
             };
 
-            // 3. Ultra-lightweight recursive AST Walker
             const walk = (node, visitor) => {
                 if (!node || typeof node !== 'object') return;
                 if (Array.isArray(node)) {
@@ -179,32 +209,32 @@ class ProxyInterceptor {
                 }
             };
 
-            // 4. Traverse and Mutate Nodes
             walk(ast, (node) => {
-                // A. Direct Calls / New Instances (e.g., fetch(), new WebSocket())
                 if ((node.type === 'CallExpression' || node.type === 'NewExpression') && node.callee.type === 'Identifier') {
                     if (TARGETS[node.callee.name]) {
                         node.callee.name = TARGETS[node.callee.name];
                     }
                 }
                 
-                // B. Non-computed Property Access (e.g., self.fetch)
                 if (node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier') {
                     if (TARGETS[node.property.name]) {
                         node.property.name = TARGETS[node.property.name];
                     }
+                    
+                    if (node.object.name === 'self' && node.property.name === 'location') {
+                        Object.keys(node).forEach(key => delete node[key]);
+                        node.type = 'Identifier';
+                        node.name = '__proxyLocation';
+                    }
                 }
 
-                // C. Computed/Obfuscated Property Access (e.g., self['fe' + 'tch'])
                 if (node.type === 'MemberExpression' && node.computed) {
                     const propVal = evaluateStringConcat(node.property);
                     if (propVal && TARGETS[propVal]) {
-                        // Mutate the computed property into a static string literal of our proxy function
                         node.property = { type: 'Literal', value: TARGETS[propVal], raw: `'${TARGETS[propVal]}'` };
                     }
                 }
 
-                // D. Specific OS-Level Mitigations (clients.openWindow, registration.showNotification)
                 if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
                     const propName = node.callee.property.name || evaluateStringConcat(node.callee.property);
                     if (propName === 'openWindow') {
@@ -215,20 +245,21 @@ class ProxyInterceptor {
                 }
             });
 
-            // 5. Generate and return the newly secured script
             return generate(ast);
 
         } catch (e) {
             console.warn("V2 Proxy - AST Parsing Failed, falling back to Regex", e);
-            // Fallback for broken/invalid syntax that might crash Acorn
-            return rawText
+            let patchedText = rawText
                 .replace(/\bfetch\s*\(/g, 'self.__proxyFetch(')
                 .replace(/\bnew\s+WebSocket\s*\(/g, 'new self.__proxyWebSocket(')
                 .replace(/\bnew\s+XMLHttpRequest\s*\(/g, 'new self.__proxyXMLHttpRequest(')
                 .replace(/\bnew\s+EventSource\s*\(/g, 'new self.__proxyEventSource(')
                 .replace(/\bimportScripts\s*\(/g, 'self.__proxyImportScripts(')
                 .replace(/\bclients\.openWindow\s*\(/g, 'self.__proxyOpenWindow(')
-                .replace(/\b(?:self\.)?registration\.showNotification\s*\(/g, 'self.__proxyShowNotification(');
+                .replace(/\b(?:self\.)?registration\.showNotification\s*\(/g, 'self.__proxyShowNotification(')
+                .replace(/\bself\.location\b/g, '__proxyLocation');
+                
+            return this.applyRegexPipeline(patchedText);
         }
     }
 
@@ -263,7 +294,6 @@ class ProxyInterceptor {
         const OriginalWebSocket = window.WebSocket;
         window.WebSocket = function(url, protocols) { return new OriginalWebSocket(self.createPiggybackUrl(url), protocols); };
 
-        // Patch window.open for SSO popups and external links
         const originalWindowOpen = window.open;
         window.open = function(url, target, windowFeatures) {
             try {
@@ -276,12 +306,15 @@ class ProxyInterceptor {
 
         // Service Worker Patching
         if (navigator.serviceWorker) {
+            // Save the original register specifically for our own root SW later
+            this._originalSwRegister = navigator.serviceWorker.register;
             const originalRegister = navigator.serviceWorker.register;
+            
             navigator.serviceWorker.register = async function(scriptURL, options) {
                 try {
                     const response = await originalFetch(self.createPiggybackUrl(scriptURL));
                     let swText = self.rewriteWorkerCode(await response.text());
-                    const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + swText], { type: 'application/javascript' }));
+                    const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox(scriptURL) + '\n' + swText], { type: 'application/javascript' }));
                     const defaultScope = new URL(scriptURL, window.location.href).pathname.replace(/\/[^\/]*$/, '/');
                     return originalRegister.call(this, blobUrl, { ...options, scope: options?.scope || defaultScope });
                 } catch (err) { return originalRegister.call(this, scriptURL, options); }
@@ -308,7 +341,7 @@ class ProxyInterceptor {
                         const response = await originalFetch(self.createPiggybackUrl(scriptURL));
                         let text = self.rewriteWorkerCode(await response.text());
                         if (proxyWorker._terminated) return;
-                        realWorker = new OriginalWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' })), options);
+                        realWorker = new OriginalWorker(URL.createObjectURL(new Blob([self.getWorkerSandbox(scriptURL) + '\n' + text], { type: 'application/javascript' })), options);
                         realWorker.onmessage = (e) => eventTarget.dispatchEvent(new MessageEvent('message', { data: e.data }));
                         realWorker.onerror = (e) => eventTarget.dispatchEvent(new ErrorEvent('error', { error: e.error, message: e.message }));
                         messageQueue.forEach(m => realWorker.postMessage(m.msg, m.transfer)); messageQueue = [];
@@ -330,7 +363,6 @@ class ProxyInterceptor {
                 channel.port1.start();
                 channel.port2.start();
 
-                // Queue or pass along messages while fetching
                 channel.port2.addEventListener('message', (e) => {
                     if (realWorker) {
                         realWorker.port.postMessage(e.data);
@@ -343,12 +375,11 @@ class ProxyInterceptor {
                     try {
                         const response = await originalFetch(self.createPiggybackUrl(scriptURL));
                         let text = self.rewriteWorkerCode(await response.text());
-                        const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox() + '\n' + text], { type: 'application/javascript' }));
+                        const blobUrl = URL.createObjectURL(new Blob([self.getWorkerSandbox(scriptURL) + '\n' + text], { type: 'application/javascript' }));
                         
                         realWorker = new OriginalSharedWorker(blobUrl, options);
                         realWorker.port.start();
 
-                        // Pipe responses back to the original calling window
                         realWorker.port.addEventListener('message', (e) => {
                             channel.port2.postMessage(e.data);
                         });
@@ -357,7 +388,6 @@ class ProxyInterceptor {
                             realWorker.onerror = proxyWorker.onerror;
                         }
 
-                        // Send any queued messages
                         messageQueue.forEach(msg => realWorker.port.postMessage(msg));
                         messageQueue = [];
                     } catch (err) {}
@@ -382,31 +412,50 @@ class ProxyInterceptor {
             Object.defineProperty(document, 'documentURI', { get: () => spoofedUrl });
         } catch (e) {}
 
+        const self = this;
+        const mockLocationUrl = new URL(spoofedUrl);
+        window.__proxyLocation = new Proxy(mockLocationUrl, {
+            get: function(target, prop) {
+                if (prop === 'toString') return () => target.href;
+                if (prop === 'assign') return (url) => window.location.assign(self.createPiggybackUrl(url));
+                if (prop === 'replace') return (url) => window.location.replace(self.createPiggybackUrl(url));
+                if (prop === 'reload') return () => window.location.reload();
+                if (typeof target[prop] === 'function') return target[prop].bind(target);
+                return target[prop];
+            },
+            set: function(target, prop, value) {
+                if (prop === 'href') {
+                    window.location.href = self.createPiggybackUrl(value);
+                    return true;
+                }
+                target[prop] = value;
+                return true;
+            }
+        });
+        document.__proxyLocation = window.__proxyLocation;
+
         const originalPushState = history.pushState;
         const originalReplaceState = history.replaceState;
 
         history.pushState = function(state, unused, url) {
-            if (url) url = interceptor.createPiggybackUrl(url.toString());
+            if (url) url = self.createPiggybackUrl(url.toString());
             return originalPushState.call(this, state, unused, url);
         };
         history.replaceState = function(state, unused, url) {
-            if (url) url = interceptor.createPiggybackUrl(url.toString());
+            if (url) url = self.createPiggybackUrl(url.toString());
             return originalReplaceState.call(this, state, unused, url);
         };
         
         console.log(`🛡️ V2 Proxy - Location Spoofed: ${targetDomain}`);
     }
 
-    // Phase 5: Cross-Origin Iframe & SSO Patches
     applyPostMessageSpoofing() {
         const self = this;
 
-        // 1. Intercept Outbound: Translate targetOrigin to our Proxy Hash
         const originalPostMessage = Window.prototype.postMessage;
         Window.prototype.postMessage = function(message, targetOrigin, transfer) {
             let proxiedOrigin = targetOrigin;
             
-            // We only modify specific targeted origins, ignoring '*' or '/'
             if (targetOrigin && targetOrigin !== '*' && targetOrigin !== '/') {
                 try {
                     const url = new URL(targetOrigin);
@@ -419,23 +468,19 @@ class ProxyInterceptor {
             return originalPostMessage.call(this, message, proxiedOrigin, transfer);
         };
 
-        // 2. Intercept Inbound: Spoof MessageEvent.origin back to the Real Domain
         const originalOriginGetter = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'origin')?.get;
         if (originalOriginGetter) {
             Object.defineProperty(MessageEvent.prototype, 'origin', {
                 get: function() {
                     const realOrigin = originalOriginGetter.call(this);
                     
-                    // If the incoming message came from one of our proxy alias subdomains
                     if (realOrigin && typeof realOrigin === 'string' && realOrigin.endsWith(self.proxyDomain)) {
                         try {
-                            // Best-effort reverse lookup: If the sending window is accessible within 
-                            // the proxy environment, read its injected target domain directly!
                             if (this.source && this.source.__TARGET_DOMAIN__) {
                                 return 'https://' + this.source.__TARGET_DOMAIN__;
                             }
                         } catch (e) {
-                            // DOMException: Cross-Origin Read Blocking (Expected behavior for strict browsers)
+                            // DOMException expected here for strict cross-origin policies
                         }
                     }
                     return realOrigin;
@@ -444,6 +489,31 @@ class ProxyInterceptor {
         }
 
         console.log("🛡️ V2 Proxy - postMessage & SSO Flows Patched");
+    }
+
+    // --- NEW: Register the Main Proxy Service Worker ---
+    async registerRootServiceWorker(swPath = '/sw.js') {
+        if (!navigator.serviceWorker) return;
+
+        try {
+            // Fetch the SW text strictly from your root domain to bypass same-origin strictness on the alias
+            const rootSwUrl = `https://${this.proxyDomain}${swPath}`;
+            const response = await fetch(rootSwUrl);
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const swScript = await response.text();
+
+            // Create a blob URL to execute it legally within the current subdomain scope
+            const blobUrl = URL.createObjectURL(new Blob([swScript], { type: 'application/javascript' }));
+
+            // Use the unpatched register method so we don't accidentally run AST parsing on our OWN proxy SW!
+            const realRegister = this._originalSwRegister || Object.getPrototypeOf(navigator.serviceWorker).register;
+            
+            const registration = await realRegister.call(navigator.serviceWorker, blobUrl, { scope: '/' });
+            console.log(`🛡️ V2 Proxy - Root Service Worker Registered Successfully! Scope: ${registration.scope}`);
+        } catch (error) {
+            console.error('🛡️ V2 Proxy - Root Service Worker registration failed:', error);
+        }
     }
 }
 
@@ -454,3 +524,7 @@ const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__, hashConfigLeng
 interceptor.applyMainThreadPatches();
 interceptor.applyLocationSpoofing();
 interceptor.applyPostMessageSpoofing();
+
+// Fire off the proxy's own root service worker registration
+// Note: You can change the path if your SW is located somewhere else (e.g., '/proxy-sw.js')
+interceptor.registerRootServiceWorker('/__proxy/sw.js');

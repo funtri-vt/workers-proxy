@@ -12,11 +12,11 @@ class HeadInjector {
     }
     
     element(element) {
-        // Expose the proxy domain, target domain, and hash length globally, then inject our interceptor
+        // FIXED: Using JSON.stringify() to guarantee safe escaping of variables into JS space
         element.prepend(`
             <script>
-                window.__PROXY_DOMAIN__ = "${this.proxyDomain}";
-                window.__TARGET_DOMAIN__ = "${this.targetDomain}";
+                window.__PROXY_DOMAIN__ = ${JSON.stringify(this.proxyDomain)};
+                window.__TARGET_DOMAIN__ = ${JSON.stringify(this.targetDomain)};
                 window.__PROXY_HASH_LENGTH__ = ${this.hashLength};
             </script>
             <script src="/__proxy/interceptor.js"></script>
@@ -28,20 +28,26 @@ class UniversalAliasRewriter {
     constructor(proxyDomain, hashLength) {
         this.proxyDomain = proxyDomain;
         this.hashLength = hashLength;
-        this.targetAttributes = ['href', 'src', 'action', 'poster'];
+        // ADDED: formaction to catch modern form overrides
+        this.targetAttributes = ['href', 'src', 'action', 'poster', 'formaction'];
     }
 
     async rewriteUrl(originalUrl) {
         try {
-            if (!originalUrl || originalUrl.startsWith('data:') || originalUrl.startsWith('javascript:')) return originalUrl;
+            if (!originalUrl) return originalUrl;
+            
+            // FIXED: Normalize before checking for blacklisted schemes
+            const normalizedUrl = originalUrl.trim().toLowerCase();
+            if (normalizedUrl.startsWith('data:') || normalizedUrl.startsWith('javascript:') || normalizedUrl.startsWith('mailto:')) {
+                return originalUrl; 
+            }
+
             let urlToParse = originalUrl.startsWith('//') ? 'https:' + originalUrl : originalUrl;
             
-            // Added WebSocket protocol coverage
             const validProtocols = ['http://', 'https://', 'ws://', 'wss://'];
-            if (validProtocols.some(protocol => urlToParse.startsWith(protocol))) {
+            if (validProtocols.some(protocol => urlToParse.toLowerCase().startsWith(protocol))) {
                 const urlObj = new URL(urlToParse);
                 
-                // Use .host instead of .hostname to retain specific port numbers
                 const targetDomain = urlObj.host;
                 if (targetDomain.endsWith(this.proxyDomain)) return originalUrl;
 
@@ -62,6 +68,19 @@ class UniversalAliasRewriter {
                 if (newUrl !== val) element.setAttribute(attr, newUrl);
             }
         }
+
+        // ADDED: Special handling for srcset, which can contain multiple URLs
+        const srcset = element.getAttribute('srcset');
+        if (srcset) {
+            const parts = srcset.split(',');
+            const rewrittenParts = await Promise.all(parts.map(async (part) => {
+                const [url, size] = part.trim().split(/\s+/);
+                if (!url) return part;
+                const newUrl = await this.rewriteUrl(url);
+                return size ? `${newUrl} ${size}` : newUrl;
+            }));
+            element.setAttribute('srcset', rewrittenParts.join(', '));
+        }
     }
 }
 
@@ -74,16 +93,16 @@ class MetaRefreshRewriter {
     async element(element) {
         const content = element.getAttribute('content');
         if (content) {
-            // Robust, case-insensitive Regex parsing for Meta Refresh URLs
-            const urlMatch = content.match(/url\s*=\s*['"]?([^'"]+)['"]?/i);
+            // FIXED: Regex updated to better handle unquoted URLs followed by semicolons
+            const urlMatch = content.match(/url\s*=\s*['"]?([^'";]+)['"]?/i);
             
             if (urlMatch && urlMatch[1]) {
                 const originalUrl = urlMatch[1].trim();
                 const rewriter = new UniversalAliasRewriter(this.proxyDomain, this.hashLength);
                 const newUrl = await rewriter.rewriteUrl(originalUrl);
                 
-                // Replace the old URL with the new proxied URL, preserving the original delay
-                const newContent = content.replace(urlMatch[0], `url=${newUrl}`);
+                // Replace safely
+                const newContent = content.replace(originalUrl, newUrl);
                 element.setAttribute('content', newContent);
             }
         }
@@ -93,7 +112,8 @@ class MetaRefreshRewriter {
 export function injectHTMLRewriter(response, proxyDomain, targetDomain, hashLength = 32) {
     return new HTMLRewriter()
         .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength))
-        .on('a, img, script, link, form, video, source, iframe', new UniversalAliasRewriter(proxyDomain, hashLength))
+        // ADDED: button to catch formactions
+        .on('a, img, script, link, form, button, input, video, source, iframe', new UniversalAliasRewriter(proxyDomain, hashLength))
         .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain, hashLength))
         .transform(response);
 }
