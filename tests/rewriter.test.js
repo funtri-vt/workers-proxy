@@ -17,8 +17,8 @@ describe('HTMLRewriter Module', () => {
             mockResponse, 
             PROXY_DOMAIN, 
             TARGET_DOMAIN, 
-            HASH_LENGTH, 
-            MOCK_COOKIES
+            MOCK_COOKIES, 
+            HASH_LENGTH
         );
         
         return await rewrittenResponse.text();
@@ -41,9 +41,9 @@ describe('HTMLRewriter Module', () => {
         </body>`;
         const result = await rewriteAndRead(html);
         
-        // It should convert to aliases and append __ptarget
-        expect(result).toMatch(/href="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/search\?q=test&__ptarget=[A-Za-z0-9=]+"/);
-        expect(result).toMatch(/src="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/pic\.png\?__ptarget=[A-Za-z0-9=]+"/);
+        // It should convert to aliases and append __ptarget (accounting for URL-encoded %3D padding)
+        expect(result).toMatch(/href="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/search\?q=test&__ptarget=[A-Za-z0-9=%]+"/);
+        expect(result).toMatch(/src="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/pic\.png\?__ptarget=[A-Za-z0-9=%]+"/);
     });
 
     it('should ignore data:, mailto:, and javascript: URIs', async () => {

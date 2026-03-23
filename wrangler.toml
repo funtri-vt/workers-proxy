@@ -4,7 +4,8 @@ compatibility_date = "2026-03-20"
 compatibility_flags = ["global_fetch_strictly_public"]
 
 [build]
-command = "npm run build"
+# Run tests first; if they pass, proceed to bundle the interceptor
+command = "npm run test && npm run build"
 watch_dir = "src"
 
 # This rule allows us to import our raw HTML and JS files as strings in the Worker
