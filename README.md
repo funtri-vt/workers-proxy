@@ -1,6 +1,6 @@
 # **Workers Edge Proxy**
 
-## This project is currently a work-in-progress and still currently at the proof of concept stage. Expect issues or unimplemented features.
+## This project is currently a work-in-progress and still currently (mostly) at the proof of concept stage. Expect issues or unimplemented features.
 
 **Workers Edge Proxy** is a secure, blazing-fast web proxy built entirely on the Cloudflare Workers serverless edge. By rethinking traditional proxy architecture, it leverages dynamic wildcard DNS routing to enforce strict Same-Origin Policy (SOP) isolation. Session state and cookies are locked safely at the edge using Cloudflare D1 (SQLite), ensuring client-side scripts never touch sensitive credentials. Protected by Cloudflare Zero Trust, it allows authenticated users to seamlessly browse the modern web—complete with native WebSocket support—without compromising native browser sandboxing.
 
