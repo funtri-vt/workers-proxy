@@ -88,7 +88,7 @@ import { generate } from 'astring';
  * V2 Edge Proxy - Client-Side Interceptor & Worker Patcher
  * Injected into the <head> of every proxied page.
  */
-class ProxyInterceptor {
+export class ProxyInterceptor {
     constructor(proxyDomain, hashLength = 32) {
         this.proxyDomain = proxyDomain;
         this.hashLength = hashLength;
