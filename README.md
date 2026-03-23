@@ -6,7 +6,7 @@
 
 ### **Core Architecture & Features**
 
-* **Dynamic SOP Sandboxing:** Uses deterministic 16-character hash subdomains (via wildcard DNS) to route and isolate every proxied target. This perfectly preserves native browser security boundaries and prevents cross-site data leakage.  
+* **Dynamic SOP Sandboxing:** Uses deterministic configurable-length hash subdomains (via wildcard DNS) to route and isolate every proxied target. This perfectly preserves native browser security boundaries and prevents cross-site data leakage.  
 * **Edge-Native Cookie Vault:** Strips Set-Cookie headers from upstream responses and securely stores session state in Cloudflare D1. Cookies are injected server-side on outbound requests, keeping them completely invisible to the client's browser.  
 * **Zero Trust Integration:** Natively protected behind Cloudflare Access, binding isolated SQLite sessions to cryptographically verified user identities.  
 * **Advanced Client Interception:** Injects a secure, monkey-patched web worker sandbox into the DOM to seamlessly proxy background networking, including WebSockets, XMLHttpRequest, fetch, and Service Worker traffic.
