@@ -9,11 +9,10 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.13.3",
     "acorn": "^8.11.3",
     "astring": "^1.8.6",
     "esbuild": "^0.27.4",
-    "vitest": "^3.0.0",
-    "wrangler": "^4.76.0",
-    "@cloudflare/vitest-pool-workers": "^0.1.0"
+    "wrangler": "^4.76.0"
   }
 }
