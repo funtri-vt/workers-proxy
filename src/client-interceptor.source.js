@@ -2,6 +2,89 @@ import * as acorn from 'acorn';
 import { generate } from 'astring';
 
 /**
+ * V3 Environment Bootstrapper: Cookie Synchronization
+ * This must run before any upstream JS executes.
+ */
+
+(function initCookieSandbox() {
+    // 1. Save the original descriptor just in case we need native behavior internally
+    const originalCookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+                                     Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+
+    // 2. We will maintain a local cache so getters are synchronous (SPAs expect instant reads)
+    // In reality, you'd want the Hypervisor to pass the initial server-side cookies here on load.
+    let localCookieCache = document.cookie; // Fallback to whatever is currently there
+
+    // 3. Override the prototype
+    Object.defineProperty(document, 'cookie', {
+        configurable: true,
+        enumerable: true,
+        
+        // GETTER: Return the synced state
+        get: function() {
+            // SPAs read cookies frequently. Returning our synced cache.
+            return localCookieCache;
+        },
+
+        // SETTER: Intercept mutations
+        set: function(val) {
+            if (!val) return;
+
+            // 1. Parse the basic key=value from the string (ignoring path/domain/expires for the local cache)
+            const cookieParts = val.split(';');
+            const primaryKvp = cookieParts[0].trim(); // e.g., "theme=dark"
+            const [cKey, ...cValParts] = primaryKvp.split('=');
+            const cVal = cValParts.join('='); // Handle edge cases where value has an '='
+
+            // 2. Update our local cache so immediate subsequent gets() are accurate
+            // (A very basic cookie string builder logic)
+            const currentCookies = localCookieCache.split(';').map(c => c.trim()).filter(Boolean);
+            const existingIndex = currentCookies.findIndex(c => c.startsWith(cKey + '='));
+            
+            if (existingIndex > -1) {
+                currentCookies[existingIndex] = `${cKey}=${cVal}`;
+            } else {
+                currentCookies.push(`${cKey}=${cVal}`);
+            }
+            localCookieCache = currentCookies.join('; ');
+
+            // 3. SYNC TO SERVER (D1 Vault)
+            // Fire and forget fetch to our Edge Worker to update the vault
+            syncCookieToEdge(val);
+
+            // Optional: Still pass to the native setter if we want the browser to hold it for this domain
+            if (originalCookieDescriptor && originalCookieDescriptor.set) {
+                originalCookieDescriptor.set.call(this, val);
+            }
+        }
+    });
+
+    /**
+     * Sends the raw Set-Cookie string to the Cloudflare Worker
+     * The Worker parses it and upserts into the D1 `session_cookies` table.
+     */
+    function syncCookieToEdge(rawCookieString) {
+        // We use our dedicated internal proxy endpoint
+        fetch('/__proxy/api/cookies', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                // The worker will know the user_id and target_domain context 
+                // implicitly from the edge route / jwt
+                raw_cookie: rawCookieString,
+                url: window.location.href 
+            })
+        }).catch(err => {
+            console.error("🛡️ V3 Proxy - Failed to sync client cookie to vault:", err);
+        });
+    }
+
+    console.log("🛡️ V3 Proxy - Document.cookie intercepted and synced to Edge Vault.");
+})();
+
+/**
  * V2 Edge Proxy - Client-Side Interceptor & Worker Patcher
  * Injected into the <head> of every proxied page.
  */

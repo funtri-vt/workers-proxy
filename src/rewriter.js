@@ -5,10 +5,11 @@ async function generateDomainHash(domain, hashLength = 32) {
 }
 
 class HeadInjector {
-    constructor(proxyDomain, targetDomain, hashLength) {
+    constructor(proxyDomain, targetDomain, hashLength, cookieString) {
         this.proxyDomain = proxyDomain;
         this.targetDomain = targetDomain;
         this.hashLength = hashLength;
+        this.cookieString = cookieString;
     }
     
     element(element) {
@@ -18,6 +19,7 @@ class HeadInjector {
                 window.__PROXY_DOMAIN__ = ${JSON.stringify(this.proxyDomain)};
                 window.__TARGET_DOMAIN__ = ${JSON.stringify(this.targetDomain)};
                 window.__PROXY_HASH_LENGTH__ = ${this.hashLength};
+                window.__INITIAL_COOKIES__ = ${JSON.stringify(this.cookieString || "")};
             </script>
             <script src="/__proxy/interceptor.js"></script>
         `, { html: true });
@@ -109,9 +111,9 @@ class MetaRefreshRewriter {
     }
 }
 
-export function injectHTMLRewriter(response, proxyDomain, targetDomain, hashLength = 32) {
+export function injectHTMLRewriter(response, proxyDomain, targetDomain, cookieString, hashLength = 32) {
     return new HTMLRewriter()
-        .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength))
+        .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength, cookieString))
         // ADDED: button to catch formactions
         .on('a, img, script, link, form, button, input, video, source, iframe', new UniversalAliasRewriter(proxyDomain, hashLength))
         .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain, hashLength))

@@ -329,21 +329,74 @@ export default {
                 status: 404, 
                 headers: { 'Content-Type': 'text/html; charset=utf-8' } 
             });
-        }
+            }
 
-        if (isInternalTarget(targetDomain)) {
-            return new Response("Forbidden: Access to internal network resources is blocked.", { status: 403 });
-        }
+            if (isInternalTarget(targetDomain)) {
+                return new Response("Forbidden: Access to internal network resources is blocked.", { status: 403 });
+            }
 
-        if (env.DB) {
-            const blacklistCheck = await env.DB.prepare("SELECT 1 FROM blacklisted_domains WHERE domain = ?").bind(targetDomain).first();
-            if (blacklistCheck) return new Response("Forbidden: This domain has been blacklisted by the proxy administrator.", { status: 403 });
-        }
+            if (env.DB) {
+                const blacklistCheck = await env.DB.prepare("SELECT 1 FROM blacklisted_domains WHERE domain = ?").bind(targetDomain).first();
+                if (blacklistCheck) return new Response("Forbidden: This domain has been blacklisted by the proxy administrator.", { status: 403 });
+            }
 
-        const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
-        const userIdentifier = extractUserIdentifier(request);
+            // --- CLIENT-SIDE COOKIE SYNC API ---
+            if (url.pathname === '/__proxy/api/cookies') {
+                const userId = extractUserIdentifier(request);
+                
+                if (request.method === 'GET') {
+                    let savedCookies = "";
+                    if (env.DB) {
+                        const clientPath = url.searchParams.get('path') || '/';
+                        const { results } = await env.DB.prepare(`
+                            SELECT cookie_name, cookie_value FROM session_cookies 
+                            WHERE user_id = ? AND domain = ? AND ? LIKE path || '%' AND (expires_at IS NULL OR expires_at > datetime('now'))
+                            ORDER BY LENGTH(path) DESC
+                        `).bind(userId, targetDomain, clientPath).all();
+                        if (results && results.length > 0) savedCookies = results.map(row => `${row.cookie_name}=${row.cookie_value}`).join('; ');
+                    }
+                    return new Response(JSON.stringify({ cookies: savedCookies }), { headers: { 'Content-Type': 'application/json' } });
+                } else if (request.method === 'POST') {
+                    const body = await request.json();
+                    const rawCookie = body.raw_cookie;
+                    
+                    if (rawCookie && env.DB) {
+                        const parts = rawCookie.split(';');
+                        const mainPart = parts[0];
+                        const equalIndex = mainPart.indexOf('=');
+                        
+                        if (equalIndex > -1) {
+                            const cookieName = mainPart.slice(0, equalIndex).trim();
+                            const cookieValue = mainPart.slice(equalIndex + 1).trim();
+                            let expiresAt = null, path = '/', secure = 0, httpOnly = 0, sameSite = 'Lax';
 
-        return await processUpstreamFetch(request, targetUrl, userIdentifier, env, PROXY_BASE, hashLength);
+                            for (let i = 1; i < parts.length; i++) {
+                                const partStr = parts[i].trim();
+                                const partStrLower = partStr.toLowerCase();
+                                if (partStrLower.startsWith('expires=')) expiresAt = new Date(partStr.substring(8)).toISOString().replace('T', ' ').substring(0, 19);
+                                else if (partStrLower.startsWith('max-age=')) expiresAt = new Date(Date.now() + parseInt(partStr.substring(8), 10) * 1000).toISOString().replace('T', ' ').substring(0, 19);
+                                else if (partStrLower.startsWith('path=')) path = partStr.substring(5) || '/';
+                                else if (partStrLower === 'secure') secure = 1;
+                                else if (partStrLower === 'httponly') httpOnly = 1;
+                                else if (partStrLower.startsWith('samesite=')) sameSite = partStr.substring(9);
+                            }
+
+                            await env.DB.prepare(`
+                                INSERT INTO session_cookies (user_id, domain, cookie_name, cookie_value, expires_at, path, secure, http_only, same_site) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+                                ON CONFLICT(user_id, domain, cookie_name, path) DO UPDATE SET 
+                                cookie_value = excluded.cookie_value, expires_at = excluded.expires_at, secure = excluded.secure, http_only = excluded.http_only, same_site = excluded.same_site
+                            `).bind(userId, targetDomain, cookieName, cookieValue, expiresAt, path, secure, httpOnly, sameSite).run();
+                        }
+                    }
+                    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+                }
+            }
+
+            const targetUrl = new URL(url.pathname + url.search, `https://${targetDomain}`);
+            const userIdentifier = extractUserIdentifier(request);
+
+            return await processUpstreamFetch(request, targetUrl, userIdentifier, env, PROXY_BASE, hashLength);
         }
         
         return new Response("Invalid Route", { status: 404 });
@@ -438,7 +491,7 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
 
     const finalResponse = new Response(response.body, { status: response.status, headers: responseHeaders });
     if ((responseHeaders.get('content-type') || '').includes('text/html')) {
-        return injectHTMLRewriter(finalResponse, PROXY_BASE, targetUrl.hostname, hashLength);
+        return injectHTMLRewriter(finalResponse, PROXY_BASE, targetUrl.hostname, savedCookies, hashLength);
     }
     return finalResponse;
 }
