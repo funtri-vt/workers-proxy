@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { ProxyInterceptor, ProxyInterceptor } from  '../src/client-interceptor.source'
+import { ProxyInterceptor } from  '../src/client-interceptor.source'
 // Mock the window object so the client-interceptor doesn't crash on import
 beforeAll(() => {
     globalThis.window = { 
