@@ -5,21 +5,25 @@ async function generateDomainHash(domain, hashLength = 32) {
 }
 
 class HeadInjector {
-    constructor(proxyDomain, targetDomain, hashLength, cookieString) {
+    // ADDED: storageState to constructor
+    constructor(proxyDomain, targetDomain, hashLength, cookieString, storageState) {
         this.proxyDomain = proxyDomain;
         this.targetDomain = targetDomain;
         this.hashLength = hashLength;
         this.cookieString = cookieString;
+        this.storageState = storageState || { localStorage: {}, sessionStorage: {} };
     }
     
     element(element) {
         // FIXED: Using JSON.stringify() to guarantee safe escaping of variables into JS space
+        // ADDED: window.__PROXY_STATE__
         element.prepend(`
             <script>
                 window.__PROXY_DOMAIN__ = ${JSON.stringify(this.proxyDomain)};
                 window.__TARGET_DOMAIN__ = ${JSON.stringify(this.targetDomain)};
                 window.__PROXY_HASH_LENGTH__ = ${this.hashLength};
                 window.__INITIAL_COOKIES__ = ${JSON.stringify(this.cookieString || "")};
+                window.__PROXY_STATE__ = ${JSON.stringify(this.storageState)};
             </script>
             <script src="/__proxy/interceptor.js"></script>
         `, { html: true });
@@ -111,9 +115,10 @@ class MetaRefreshRewriter {
     }
 }
 
-export function injectHTMLRewriter(response, proxyDomain, targetDomain, cookieString, hashLength = 32) {
+// ADDED: storageState parameter with a safe default
+export function injectHTMLRewriter(response, proxyDomain, targetDomain, cookieString, storageState = { localStorage: {}, sessionStorage: {} }, hashLength = 32) {
     return new HTMLRewriter()
-        .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength, cookieString))
+        .on('head', new HeadInjector(proxyDomain, targetDomain, hashLength, cookieString, storageState))
         // ADDED: button to catch formactions
         .on('a, img, script, link, form, button, input, video, source, iframe', new UniversalAliasRewriter(proxyDomain, hashLength))
         .on('meta[http-equiv="refresh"]', new MetaRefreshRewriter(proxyDomain, hashLength))

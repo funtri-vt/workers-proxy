@@ -12,8 +12,7 @@ import { generate } from 'astring';
                                      Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
 
     // 2. We will maintain a local cache so getters are synchronous (SPAs expect instant reads)
-    // In reality, you'd want the Hypervisor to pass the initial server-side cookies here on load.
-    let localCookieCache = document.cookie; // Fallback to whatever is currently there
+    let localCookieCache = window.__INITIAL_COOKIES__ || document.cookie; // Fallback to whatever is currently there
 
     // 3. Override the prototype
     Object.defineProperty(document, 'cookie', {
@@ -493,6 +492,119 @@ class ProxyInterceptor {
         console.log("🛡️ V2 Proxy - Core Network & Window Opening Patched");
     }
 
+    // --- NEW: V3 Synchronous Storage Hydration & Syncing ---
+    applyStorageSpoofing() {
+        // Hydrate from the Worker's injected state. Fallback to empty if not present.
+        if (!window.__PROXY_STATE__) {
+            window.__PROXY_STATE__ = { localStorage: {}, sessionStorage: {} };
+        }
+
+        const state = window.__PROXY_STATE__;
+        state.localStorage = state.localStorage || {};
+        state.sessionStorage = state.sessionStorage || {};
+
+        // Debounced sync to Worker/R2
+        let syncTimeout;
+        const syncStateToEdge = () => {
+            if (syncTimeout) clearTimeout(syncTimeout);
+            syncTimeout = setTimeout(() => {
+                const payload = JSON.stringify({
+                    localStorage: state.localStorage,
+                    sessionStorage: state.sessionStorage,
+                    url: window.location.href
+                });
+                
+                // Use sendBeacon for immediate, background reliability (especially during unloads)
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon('/__proxy/state/sync', payload);
+                } else {
+                    fetch('/__proxy/state/sync', { method: 'POST', body: payload, keepalive: true }).catch(e => {});
+                }
+            }, 2000); // 2-second debounce
+        };
+
+        // 1. Override Storage.prototype (catches getItem/setItem calls)
+        const originalSetItem = Storage.prototype.setItem;
+        const originalGetItem = Storage.prototype.getItem;
+        const originalRemoveItem = Storage.prototype.removeItem;
+        const originalClear = Storage.prototype.clear;
+
+        Storage.prototype.setItem = function(key, value) {
+            const strVal = String(value);
+            if (this === window.localStorage) state.localStorage[key] = strVal;
+            else if (this === window.sessionStorage) state.sessionStorage[key] = strVal;
+            
+            syncStateToEdge();
+            return originalSetItem.call(this, key, strVal);
+        };
+
+        Storage.prototype.getItem = function(key) {
+            if (this === window.localStorage && key in state.localStorage) return state.localStorage[key];
+            if (this === window.sessionStorage && key in state.sessionStorage) return state.sessionStorage[key];
+            return originalGetItem.call(this, key);
+        };
+
+        Storage.prototype.removeItem = function(key) {
+            if (this === window.localStorage) delete state.localStorage[key];
+            else if (this === window.sessionStorage) delete state.sessionStorage[key];
+            
+            syncStateToEdge();
+            return originalRemoveItem.call(this, key);
+        };
+
+        Storage.prototype.clear = function() {
+            if (this === window.localStorage) state.localStorage = {};
+            else if (this === window.sessionStorage) state.sessionStorage = {};
+            
+            syncStateToEdge();
+            return originalClear.call(this);
+        };
+
+        // 2. Wrap window.localStorage/sessionStorage (catches direct property assignment: localStorage.theme = 'dark')
+        try {
+            const createStorageProxy = (storageType) => {
+                return new Proxy(window[storageType], {
+                    get: function(target, prop) {
+                        if (typeof originalGetItem.call(target, prop) !== 'undefined' && typeof target[prop] === 'function') {
+                            return target[prop].bind(target);
+                        }
+                        if (prop in state[storageType]) return state[storageType][prop];
+                        return target[prop];
+                    },
+                    set: function(target, prop, value) {
+                        state[storageType][prop] = String(value);
+                        syncStateToEdge();
+                        target[prop] = String(value);
+                        return true;
+                    },
+                    deleteProperty: function(target, prop) {
+                        delete state[storageType][prop];
+                        syncStateToEdge();
+                        delete target[prop];
+                        return true;
+                    }
+                });
+            };
+
+            // Note: In some WebKit environments, window.localStorage is non-configurable. 
+            // The try/catch ensures we safely fall back to just the prototype overrides if it fails.
+            Object.defineProperty(window, 'localStorage', { value: createStorageProxy('localStorage'), configurable: true, writable: true });
+            Object.defineProperty(window, 'sessionStorage', { value: createStorageProxy('sessionStorage'), configurable: true, writable: true });
+        } catch (e) {
+            console.warn("🛡️ V3 Proxy - Could not proxy window.localStorage directly. Relying on Storage.prototype hooks.", e);
+        }
+
+        // 3. Unload listener for final sync (Useful for IndexedDB later)
+        window.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                syncStateToEdge(); 
+                // Note for later: We will trigger the IndexedDB blob export here
+            }
+        });
+
+        console.log("🛡️ V3 Proxy - Storage (Local/Session) Spoofed & Synced to R2 Edge");
+    }
+
     applyLocationSpoofing() {
         if (!window.__TARGET_DOMAIN__) return;
         const targetDomain = window.__TARGET_DOMAIN__;
@@ -615,6 +727,7 @@ const hashConfigLength = window.__PROXY_HASH_LENGTH__ || 32;
 const interceptor = new ProxyInterceptor(window.__PROXY_DOMAIN__, hashConfigLength);
 
 interceptor.applyMainThreadPatches();
+interceptor.applyStorageSpoofing(); // <--- V3 Storage Injection
 interceptor.applyLocationSpoofing();
 interceptor.applyPostMessageSpoofing();
 

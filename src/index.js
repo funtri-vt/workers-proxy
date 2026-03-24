@@ -251,14 +251,14 @@ export default {
                     }
                     url.searchParams.delete('__ptarget');
                 } catch(err) {
-                    console.error("Invalid base64 in pTarget")
+                    console.error("Invalid base64 in pTarget");
                 }
             } else if (env.DB) {
                 const result = await env.DB.prepare("SELECT target_domain FROM domain_aliases WHERE alias_id = ?").bind(aliasHash).first();
                 if (result) targetDomain = result.target_domain;
             }
 
-            // ADDED: Fallback to Referer header for sub-resource race conditions
+            // Fallback to Referer header for sub-resource race conditions
             if (!targetDomain) {
                 const referer = request.headers.get('Referer');
                 if (referer) {
@@ -340,6 +340,30 @@ export default {
                 if (blacklistCheck) return new Response("Forbidden: This domain has been blacklisted by the proxy administrator.", { status: 403 });
             }
 
+            // --- CLIENT-SIDE STATE SYNC API ---
+            if (url.pathname === '/__proxy/api/sync') {
+                const userId = extractUserIdentifier(request);
+                
+                if (request.method === 'POST') {
+                    try {
+                        const body = await request.json();
+                        if (env.STATE_BUCKET && targetDomain) {
+                            const statePayload = JSON.stringify({
+                                localStorage: body.localStorage || {},
+                                sessionStorage: body.sessionStorage || {}
+                            });
+                            
+                            // Write directly to R2
+                            await env.STATE_BUCKET.put(`${userId}/${targetDomain}.json`, statePayload);
+                        }
+                        return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+                    } catch (e) {
+                        return new Response(JSON.stringify({ error: "Invalid payload" }), { status: 400 });
+                    }
+                }
+                return new Response("Method not allowed", { status: 405 });
+            }
+
             // --- CLIENT-SIDE COOKIE SYNC API ---
             if (url.pathname === '/__proxy/api/cookies') {
                 const userId = extractUserIdentifier(request);
@@ -414,13 +438,30 @@ export default {
 
 async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY_BASE, hashLength) {
     let savedCookies = "";
+    let storageState = { localStorage: {}, sessionStorage: {} }; 
+    
     if (env.DB) {
+        // Fetch cookies
         const { results } = await env.DB.prepare(`
             SELECT cookie_name, cookie_value FROM session_cookies 
             WHERE user_id = ? AND domain = ? AND ? LIKE path || '%' AND (expires_at IS NULL OR expires_at > datetime('now'))
             ORDER BY LENGTH(path) DESC
         `).bind(userId, targetUrl.hostname, targetUrl.pathname).all();
         if (results && results.length > 0) savedCookies = results.map(row => `${row.cookie_name}=${row.cookie_value}`).join('; ');
+    }
+
+    // Pull storage state efficiently from R2
+    if (env.STATE_BUCKET) {
+        try {
+            const stateObject = await env.STATE_BUCKET.get(`${userId}/${targetUrl.hostname}.json`);
+            if (stateObject) {
+                const stateData = await stateObject.json();
+                if (stateData.localStorage) storageState.localStorage = stateData.localStorage;
+                if (stateData.sessionStorage) storageState.sessionStorage = stateData.sessionStorage;
+            }
+        } catch (e) {
+            console.error("Failed to load state from R2:", e);
+        }
     }
 
     const proxyHeaders = new Headers(clientRequest.headers);
@@ -491,7 +532,8 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
 
     const finalResponse = new Response(response.body, { status: response.status, headers: responseHeaders });
     if ((responseHeaders.get('content-type') || '').includes('text/html')) {
-        return injectHTMLRewriter(finalResponse, PROXY_BASE, targetUrl.hostname, savedCookies, hashLength);
+        // Pass the R2 storageState into the rewriter
+        return injectHTMLRewriter(finalResponse, PROXY_BASE, targetUrl.hostname, savedCookies, storageState, hashLength);
     }
     return finalResponse;
 }
