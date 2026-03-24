@@ -74,8 +74,36 @@ self.addEventListener('fetch', (event) => {
             // Otherwise, the browser will truncate the file or throw a network error.
             newHeaders.delete('Content-Length');
             
-            // Optional but recommended: Strip CSP headers so they don't block our injected proxies
-            newHeaders.delete('Content-Security-Policy');
+            // Rewrite CSP instead of completely stripping it to maintain security
+            const csp = newHeaders.get('Content-Security-Policy');
+            if (csp) {
+                // Extract the base proxy domain (e.g., "hash.proxy.com" -> "proxy.com")
+                const hostnameParts = self.location.hostname.split('.');
+                hostnameParts.shift(); // Remove the current hash subdomain
+                const baseProxyDomain = hostnameParts.join('.');
+                
+                // Allow wildcard proxy subdomains, inline scripts for our interceptor, and blob for the SW
+                const allowedSources = `'unsafe-inline' 'unsafe-eval' https://*.${baseProxyDomain} ${self.location.origin} blob: data:`;
+
+                const patchedCsp = csp.split(';').map(directive => {
+                    const trimmedDirective = directive.trim();
+                    const directiveName = trimmedDirective.split(/\s+/)[0];
+                    
+                    // Directives that need to allow our proxy ecosystem
+                    const targets = [
+                        'default-src', 'script-src', 'script-src-elem', 
+                        'connect-src', 'worker-src', 'frame-src', 
+                        'img-src', 'style-src', 'font-src', 'media-src'
+                    ];
+                    
+                    if (targets.includes(directiveName)) {
+                        return `${trimmedDirective} ${allowedSources}`;
+                    }
+                    return trimmedDirective;
+                }).join('; ');
+                
+                newHeaders.set('Content-Security-Policy', patchedCsp);
+            }
 
             return new Response(text, {
                 status: response.status,
