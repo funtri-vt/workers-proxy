@@ -17,7 +17,8 @@ describe('HTMLRewriter Module', () => {
             mockResponse, 
             PROXY_DOMAIN, 
             TARGET_DOMAIN, 
-            MOCK_COOKIES, 
+            MOCK_COOKIES,
+            undefined,
             HASH_LENGTH
         );
         
@@ -68,5 +69,51 @@ describe('HTMLRewriter Module', () => {
         expect(result).toContain('.workers-proxy.com/img2.png?__ptarget=');
         expect(result).toContain('1x,');
         expect(result).toContain('2x"');
+    });
+    it('should safely rewrite attributes split across streaming chunks', async () => {
+        const html = `<body>
+            <a href="https://streaming.example.com/path?test=1">Chunked Link</a>
+            <img src="https://streaming.example.com/image.png" />
+        </body>`;
+        
+        // Create a ReadableStream that feeds the HTML in painfully small 2-byte chunks.
+        // This guarantees that elements like <a href="..."> will be split across multiple chunks.
+        let position = 0;
+        const chunkSize = 2;
+        const encoder = new TextEncoder();
+        
+        const chunkedStream = new ReadableStream({
+            pull(controller) {
+                if (position >= html.length) {
+                    controller.close();
+                    return;
+                }
+                const chunk = html.slice(position, position + chunkSize);
+                controller.enqueue(encoder.encode(chunk));
+                position += chunkSize;
+            }
+        });
+
+        // Wrap the stream in a Response
+        const mockResponse = new Response(chunkedStream, {
+            headers: { 'Content-Type': 'text/html' }
+        });
+        
+        // Pass through our rewriter
+        const rewrittenResponse = injectHTMLRewriter(
+            mockResponse, 
+            PROXY_DOMAIN, 
+            TARGET_DOMAIN, 
+            MOCK_COOKIES,
+            undefined,
+            HASH_LENGTH
+        );
+        
+        const result = await rewrittenResponse.text();
+        
+        // Validate that the rewriter successfully caught and rewrote the severed attributes
+        expect(result).toMatch(/href="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/path\?test=1&__ptarget=[A-Za-z0-9=%]+"/);
+        expect(result).toMatch(/src="https:\/\/[a-f0-9]{16}\.workers-proxy\.com\/image\.png\?__ptarget=[A-Za-z0-9=%]+"/);
+        expect(result).toContain(">Chunked Link</a>");
     });
 });
