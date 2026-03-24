@@ -16,7 +16,7 @@ import { generate } from 'astring';
 
     // 3. Override the prototype
     Object.defineProperty(document, 'cookie', {
-        configurable: true,
+        configurable: false,
         enumerable: true,
         
         // GETTER: Return the synced state
