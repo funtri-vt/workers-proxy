@@ -514,11 +514,11 @@ class ProxyInterceptor {
                     url: window.location.href
                 });
                 
-                // Use sendBeacon for immediate, background reliability (especially during unloads)
+                // FIXED: Updated endpoint to match the worker's /__proxy/api/sync route
                 if (navigator.sendBeacon) {
-                    navigator.sendBeacon('/__proxy/state/sync', payload);
+                    navigator.sendBeacon('/__proxy/api/sync', payload);
                 } else {
-                    fetch('/__proxy/state/sync', { method: 'POST', body: payload, keepalive: true }).catch(e => {});
+                    fetch('/__proxy/api/sync', { method: 'POST', body: payload, keepalive: true }).catch(e => {});
                 }
             }, 2000); // 2-second debounce
         };
