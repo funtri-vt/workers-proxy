@@ -19,6 +19,9 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
         await env.DB.prepare("CREATE TABLE IF NOT EXISTS blacklisted_domains (domain TEXT PRIMARY KEY, added_at DATETIME DEFAULT CURRENT_TIMESTAMP)").run();
         await env.DB.prepare("CREATE TABLE IF NOT EXISTS database_config (config_key TEXT PRIMARY KEY, config_value TEXT NOT NULL)").run();
         await env.DB.prepare("CREATE TABLE IF NOT EXISTS session_cookies (user_id TEXT NOT NULL, domain TEXT NOT NULL, cookie_name TEXT NOT NULL, cookie_value TEXT NOT NULL, expires_at DATETIME, path TEXT DEFAULT '/', secure INTEGER DEFAULT 0, http_only INTEGER DEFAULT 0, same_site TEXT DEFAULT 'Lax', PRIMARY KEY (user_id, domain, cookie_name, path))").run();
+        
+        // ADDED: Initialize the audit table for migrations
+        await env.DB.prepare("CREATE TABLE IF NOT EXISTS migration_audit (audit_id TEXT PRIMARY KEY, operator TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)").run();
     });
 
     beforeEach(async () => {
@@ -29,6 +32,7 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
         // Clear D1 Tables safely now that they exist
         await env.DB.prepare("DELETE FROM domain_aliases").run();
         await env.DB.prepare("DELETE FROM blacklisted_domains").run();
+        await env.DB.prepare("DELETE FROM migration_audit").run();
     });
 
     it('should lock out users (503) if the database is not configured', async () => {
@@ -79,5 +83,74 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
         expect(results.length).toBe(1);
         expect(results[0].target_domain).toBe(targetDomain);
         expect(results[0].alias_id).toBe(validHash);
+    });
+
+    // --- NEW: Batch Migration Tests ---
+    describe('Admin API - Batch Migrations', () => {
+        beforeEach(async () => {
+            // Seed specific aliases for migration tests
+            await env.DB.prepare("INSERT INTO domain_aliases (alias_id, target_domain) VALUES ('old1', 'test1.com'), ('old2', 'test2.com')").run();
+        });
+
+        it('SERVER: should successfully process a valid batch within a transaction', async () => {
+            const payload = {
+                migrations: [
+                    { target_domain: 'test1.com', new_alias_id: 'new1', old_alias_id: 'old1' },
+                    { target_domain: 'test2.com', new_alias_id: 'new2', old_alias_id: 'old2' }
+                ],
+                dryRun: false
+            };
+
+            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+
+            expect(response.status).toBe(200);
+            expect(data.success).toBe(true);
+            expect(data.migrated).toBe(2);
+            expect(data.audit_id).toBeDefined();
+
+            // Verify DB state actually updated
+            const { results } = await env.DB.prepare("SELECT alias_id FROM domain_aliases WHERE target_domain = 'test1.com'").all();
+            expect(results[0].alias_id).toBe('new1');
+        });
+
+        it('SERVER: should accurately reflect a dry-run without modifying the database', async () => {
+            const payload = {
+                migrations: [{ target_domain: 'test1.com', new_alias_id: 'new1', old_alias_id: 'old1' }],
+                dryRun: true
+            };
+
+            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+
+            expect(response.status).toBe(200);
+            expect(data.migrated).toBe(1);
+
+            // Verify DB was NOT modified
+            const { results } = await env.DB.prepare("SELECT alias_id FROM domain_aliases WHERE target_domain = 'test1.com'").all();
+            expect(results[0].alias_id).toBe('old1'); 
+        });
+
+        it('SERVER: should reject payloads exceeding the MAX_BATCH limit of 200', async () => {
+            const largeBatch = Array.from({ length: 201 }, (_, i) => ({
+                target_domain: `site${i}.com`, new_alias_id: `hash${i}`
+            }));
+
+            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+                method: 'POST',
+                body: JSON.stringify({ migrations: largeBatch }),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            expect(response.status).toBe(413);
+        });
     });
 });

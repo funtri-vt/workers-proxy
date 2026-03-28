@@ -92,16 +92,82 @@ export default {
                 // Batch Migration API
                 if (url.pathname === '/__admin/api/aliases/migrate') {
                     if (request.method === 'POST') {
-                        const { migrations } = await request.json();
-                        if (Array.isArray(migrations) && migrations.length > 0) {
-                            // Run batch query using D1 optimized batch method
-                            const stmts = migrations.map(m => 
-                                env.DB.prepare("UPDATE domain_aliases SET alias_id = ? WHERE target_domain = ?").bind(m.new_alias_id, m.target_domain)
-                            );
-                            await env.DB.batch(stmts);
-                            return new Response(JSON.stringify({ success: true, migrated: stmts.length }));
+                        try {
+                            const body = await request.json();
+                            const { migrations, dryRun = false, skipNoop = true } = body;
+                            const operator = extractUserIdentifier(request);
+
+                            // 1. Validate payload and enforce server-side chunking limits
+                            if (!Array.isArray(migrations)) {
+                                return new Response(JSON.stringify({ error: "Invalid payload" }), { status: 400, headers: { 'Content-Type': 'application/json' }});
+                            }
+                            if (migrations.length > 200) {
+                                return new Response(JSON.stringify({ error: "Batch exceeds maximum of 200 items" }), { status: 413, headers: { 'Content-Type': 'application/json' }});
+                            }
+
+                            let results = [];
+                            let stmts = [];
+                            let validMigrations = [];
+
+                            // 2. Validate and normalize individual items
+                            for (const m of migrations) {
+                                const target = m.target_domain?.trim().toLowerCase();
+                                const newAlias = m.new_alias_id?.trim();
+                                const oldAlias = m.old_alias_id?.trim();
+
+                                if (!target || !newAlias) {
+                                    results.push({ target_domain: target, ok: false, error: "Missing required fields" });
+                                    continue;
+                                }
+
+                                if (skipNoop && newAlias === oldAlias) {
+                                    results.push({ target_domain: target, new_alias_id: newAlias, ok: true, changedRows: 0, skipped: true });
+                                    continue;
+                                }
+
+                                validMigrations.push({ target, newAlias });
+                                
+                                if (!dryRun) {
+                                    stmts.push(env.DB.prepare("UPDATE domain_aliases SET alias_id = ? WHERE target_domain = ?").bind(newAlias, target));
+                                } else {
+                                    results.push({ target_domain: target, new_alias_id: newAlias, ok: true, changedRows: 1, dryRun: true });
+                                }
+                            }
+
+                            // 3. Execute Transaction & Audit Logging
+                            let auditId = null;
+                            if (!dryRun && stmts.length > 0) {
+                                // D1 .batch() is inherently transactional
+                                const batchResults = await env.DB.batch(stmts);
+                                
+                                batchResults.forEach((res, index) => {
+                                    results.push({
+                                        target_domain: validMigrations[index].target,
+                                        new_alias_id: validMigrations[index].newAlias,
+                                        ok: res.success,
+                                        changedRows: res.meta?.changes || 0
+                                    });
+                                });
+
+                                // Write to Audit Log
+                                auditId = crypto.randomUUID();
+                                await env.DB.prepare(
+                                    "INSERT INTO migration_audit (audit_id, operator, payload_json, result_json) VALUES (?, ?, ?, ?)"
+                                ).bind(auditId, operator, JSON.stringify(validMigrations), JSON.stringify(results)).run();
+                            }
+
+                            const migratedCount = results.filter(r => r.ok && !r.skipped).length;
+
+                            return new Response(JSON.stringify({ 
+                                success: true, 
+                                migrated: migratedCount, 
+                                results, 
+                                audit_id: auditId 
+                            }), { headers: { 'Content-Type': 'application/json' }});
+
+                        } catch (e) {
+                            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
                         }
-                        return new Response("Invalid payload", { status: 400 });
                     }
                 }
 
