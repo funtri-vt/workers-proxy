@@ -90,7 +90,16 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
         beforeEach(async () => {
             // Seed specific aliases for migration tests
             await env.DB.prepare("INSERT INTO domain_aliases (alias_id, target_domain) VALUES ('old1', 'test1.com'), ('old2', 'test2.com')").run();
+            
+            // Set up mock admin credentials in the environment
+            env.ADMIN_EMAIL = 'admin@example.com';
         });
+
+        // Helper for admin headers
+        const adminHeaders = {
+            'Content-Type': 'application/json',
+            'Cf-Access-Authenticated-User-Email': 'admin@example.com' // Matches env.ADMIN_EMAIL
+        };
 
         it('SERVER: should successfully process a valid batch within a transaction', async () => {
             const payload = {
@@ -101,10 +110,11 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
                 dryRun: false
             };
 
-            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+            // Use the base domain (example.com) to correctly route to the admin handler
+            const response = await simulateFetch('https://example.com/__admin/api/aliases/migrate', {
                 method: 'POST',
                 body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'application/json' }
+                headers: adminHeaders
             });
             const data = await response.json();
 
@@ -124,10 +134,10 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
                 dryRun: true
             };
 
-            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+            const response = await simulateFetch('https://example.com/__admin/api/aliases/migrate', {
                 method: 'POST',
                 body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'application/json' }
+                headers: adminHeaders
             });
             const data = await response.json();
 
@@ -144,12 +154,13 @@ describe('V2 Edge Proxy - Main Router (index.js)', () => {
                 target_domain: `site${i}.com`, new_alias_id: `hash${i}`
             }));
 
-            const response = await simulateFetch('https://proxy.example.com/__admin/api/aliases/migrate', {
+            const response = await simulateFetch('https://example.com/__admin/api/aliases/migrate', {
                 method: 'POST',
                 body: JSON.stringify({ migrations: largeBatch }),
-                headers: { 'Content-Type': 'application/json' }
+                headers: adminHeaders
             });
             
+            // Now correctly expects the 413 Payload Too Large
             expect(response.status).toBe(413);
         });
     });
