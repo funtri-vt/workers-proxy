@@ -539,10 +539,23 @@ async function processUpstreamFetch(clientRequest, targetUrl, userId, env, PROXY
 }
 
 function extractUserIdentifier(request) {
+    // 1. Primary: Fast path using Cloudflare's native authenticated email header
+    const accessEmail = request.headers.get('Cf-Access-Authenticated-User-Email');
+    if (accessEmail) {
+        return accessEmail;
+    }
+
+    // 2. Secondary: Fallback to manually decoding the JWT assertion
     const jwtToken = request.headers.get('Cf-Access-Jwt-Assertion');
     if (jwtToken) {
-        try { return JSON.parse(atob(jwtToken.split('.')[1].replace(/-/g, '+').replace(/_/, '/'))).email; } catch (e) {}
+        try { 
+            return JSON.parse(atob(jwtToken.split('.')[1].replace(/-/g, '+').replace(/_/, '/'))).email; 
+        } catch (e) {
+            // Ignore parse errors and fall through to the IP fallback
+        }
     }
+
+    // 3. Tertiary: Fallback to the client's IP or an anonymous default
     return request.headers.get('CF-Connecting-IP') || 'anonymous-user';
 }
 
