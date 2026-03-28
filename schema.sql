@@ -33,6 +33,15 @@ CREATE TABLE database_config (
     config_value TEXT NOT NULL
 );
 
+-- Table 5: Migration Audit Logs
+CREATE TABLE migration_audit (
+    audit_id TEXT PRIMARY KEY,
+    operator TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed Initial Configuration Data
 INSERT INTO database_config (config_key, config_value) VALUES ('DATABASE_CONFIGURED', '0');
 INSERT INTO database_config (config_key, config_value) VALUES ('HASH_LENGTH', '32');
