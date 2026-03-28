@@ -1,0 +1,41 @@
+# Security Policy
+
+Security is the top priority for this project. Because this proxy handles sensitive session state, raw cookies, and acts as a dynamic Same-Origin Policy (SOP) sandbox, we take potential vulnerabilities very seriously.
+
+## Supported Versions
+
+Currently, only the `main` branch (latest release) is actively supported with security updates. 
+
+| Version | Supported          |
+| ------- | ------------------ |
+| v2.x.x  | :white_check_mark: |
+| v1.x.x  | :x:                |
+
+## Reporting a Vulnerability
+
+**Please do not report security vulnerabilities through public GitHub issues.** Instead, please report them using **[GitHub's Private Vulnerability Reporting]** feature (Go to the "Security" tab in this repository -> "Advisories" -> "Report a vulnerability"). 
+
+If you prefer email, you can reach out directly to: `[YOUR EMAIL HERE]`
+
+Please include:
+* A description of the vulnerability and its impact.
+* Steps to reproduce the issue (a proof-of-concept script or exact HTTP requests are highly appreciated).
+* Any relevant environment details.
+
+We will acknowledge your report within 48 hours and keep you updated as we triage and develop a patch.
+
+## Scope of Interest
+
+**We want to hear about any and all security vulnerabilities you find in this project.** However, if you are looking for specific areas to focus your research, we are particularly interested in:
+* **SOP Sandbox Escapes:** Ways for a script executing on one alias subdomain (e.g., `hashA.proxy.com`) to access cookies, `localStorage`, or DOM elements belonging to another subdomain (`hashB.proxy.com`).
+* **AST Rewriter Bypasses:** Novel ways to construct JavaScript or HTML that slips past the `rewriter.js` interceptor, allowing un-proxied external requests.
+* **Session Vault Leakage:** Unauthorized access to D1/R2 storage that leaks upstream session cookies or state.
+* **Admin Authentication Bypasses:** Ways to interact with the `/__admin` API routes without proper Cloudflare Access/JWT validation.
+
+## Out of Scope
+
+The following are generally considered out of scope:
+* Vulnerabilities in the *upstream* target websites being proxied.
+* Issues requiring physical access to a user's device or an already-compromised local browser.
+* Denial of Service (DoS) attacks directed at the Cloudflare infrastructure.
+* Missing security headers that do not lead to a direct exploit.
