@@ -36,7 +36,7 @@ To deploy this project, you will need:
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/yourusername/workers-edge-proxy.git](https://github.com/yourusername/workers-edge-proxy.git)
+   git clone https://github.com/funtri-vt/workers-proxy
    cd workers-edge-proxy
    ```
 
