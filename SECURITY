@@ -15,8 +15,6 @@ Currently, only the `main` branch (latest release) is actively supported with se
 
 **Please do not report security vulnerabilities through public GitHub issues.** Instead, please report them using **[GitHub's Private Vulnerability Reporting]** feature (Go to the "Security" tab in this repository -> "Advisories" -> "Report a vulnerability"). 
 
-If you prefer email, you can reach out directly to: `[YOUR EMAIL HERE]`
-
 Please include:
 * A description of the vulnerability and its impact.
 * Steps to reproduce the issue (a proof-of-concept script or exact HTTP requests are highly appreciated).
