@@ -44,7 +44,12 @@ class UniversalAliasRewriter {
             
             // FIXED: Normalize before checking for blacklisted schemes
             const normalizedUrl = originalUrl.trim().toLowerCase();
-            if (normalizedUrl.startsWith('data:') || normalizedUrl.startsWith('javascript:') || normalizedUrl.startsWith('mailto:')) {
+            if (
+                normalizedUrl.startsWith('data:') ||
+                normalizedUrl.startsWith('javascript:') ||
+                normalizedUrl.startsWith('vbscript:') ||
+                normalizedUrl.startsWith('mailto:')
+            ) {
                 return originalUrl; 
             }
 
